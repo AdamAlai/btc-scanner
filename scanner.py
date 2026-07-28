@@ -34,7 +34,7 @@ def notify(title, msg, priority="default"):
 def get_candles(interval, limit):
     # CoinGecko OHLC - no geo restrictions, truly free
     # Map interval to days for CoinGecko
-    days_map = {"1m": 1, "5m": 3, "15m": 7}
+    days_map = {"1m": 1, "5m": 1, "15m": 1}
     days = days_map.get(interval, 1)
     r = requests.get(
         f"https://api.coingecko.com/api/v3/coins/bitcoin/ohlc",
@@ -177,6 +177,11 @@ def main():
 
     if errors:
         notify("Scanner Error", "Errors:\n" + "\n".join(errors), priority="high")
+
+    print("Done.")
+
+if __name__ == "__main__":
+    main()
 
     print("Done.")
 
