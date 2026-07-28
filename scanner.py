@@ -1,5 +1,4 @@
 import requests
-import json
 from datetime import datetime
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
@@ -7,9 +6,9 @@ SYMBOL     = "BTCUSDT"
 NTFY_TOPIC = "btcwave554433"
 
 TIMEFRAMES = [
-    {"interval": "1",  "candles": 200, "min_gap": 150, "min_size": 200, "recent": 30,  "label": "1m"},
-    {"interval": "5",  "candles": 100, "min_gap": 200, "min_size": 300, "recent": 20,  "label": "5m"},
-    {"interval": "15", "candles": 200, "min_gap": 400, "min_size": 600, "recent": 15,  "label": "15m"},
+    {"interval": "1m",  "candles": 200, "min_gap": 150, "min_size": 200, "recent": 30,  "label": "1m"},
+    {"interval": "5m",  "candles": 100, "min_gap": 200, "min_size": 300, "recent": 20,  "label": "5m"},
+    {"interval": "15m", "candles": 200, "min_gap": 400, "min_size": 600, "recent": 15,  "label": "15m"},
 ]
 
 PEAK_WINDOW    = 5
@@ -18,7 +17,6 @@ VOLUME_CONFIRM = True
 # ─────────────────────────────────────────────────────────────────────────────
 
 def notify(title, msg, priority="default"):
-    """Send a notification to Ntfy."""
     try:
         requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
@@ -26,36 +24,36 @@ def notify(title, msg, priority="default"):
             headers={
                 "Title":    title,
                 "Priority": priority,
-                "Tags":     "chart_increasing"
             },
             timeout=10
         )
-        print(f"  📱 Ntfy sent: {title}")
+        print(f"  Ntfy sent: {title}")
     except Exception as e:
         print(f"  Ntfy failed: {e}")
 
 def get_candles(interval, limit):
-    """Fetch candles from Bybit — no geo restrictions."""
+    # CoinGecko OHLC - no geo restrictions, truly free
+    # Map interval to days for CoinGecko
+    days_map = {"1m": 1, "5m": 3, "15m": 7}
+    days = days_map.get(interval, 1)
     r = requests.get(
-        "https://api.bybit.com/v5/market/kline",
-        params={
-            "category": "linear",
-            "symbol":   SYMBOL,
-            "interval": interval,
-            "limit":    limit
-        },
-        timeout=10
+        f"https://api.coingecko.com/api/v3/coins/bitcoin/ohlc",
+        params={"vs_currency": "usd", "days": days},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=15
     )
     r.raise_for_status()
-    data    = r.json()
-    candles = list(reversed(data["result"]["list"]))  # oldest first
+    data = r.json()
+    # CoinGecko returns [timestamp, open, high, low, close]
+    # Limit to requested number of candles
+    data = data[-limit:]
     return [{
         "open":   float(c[1]),
         "high":   float(c[2]),
         "low":    float(c[3]),
         "close":  float(c[4]),
-        "volume": float(c[5])
-    } for c in candles]
+        "volume": 1.0  # CoinGecko OHLC doesn't include volume, use 1.0
+    } for c in data]
 
 def find_peaks_lows(candles):
     peaks, lows = [], []
@@ -87,12 +85,11 @@ def scan(candles, label, min_gap, min_size, recent):
     last_idx = len(candles) - 1
     alerts   = []
 
-    # ── SHORT SETUP ──────────────────────────────────────────────────────────
+    # SHORT SETUP
     # 1. 2nd peak beats 1st by at least min_gap
-    # 2. Wave height (peak to trough) >= min_size
-    # 3. 2nd peak volume >= 1st peak volume (real move not fake)
-    # 4. 3 consecutive bearish candles after 2nd peak (momentum confirmed)
-    # 5. 2nd peak is within last 'recent' candles (not stale)
+    # 2. Wave height >= min_size
+    # 3. 3 consecutive bearish candles after 2nd peak
+    # 4. 2nd peak within last 'recent' candles
     if len(peaks) >= 2:
         for i in range(len(peaks) - 1):
             idx1, p1, v1 = peaks[i]
@@ -100,17 +97,16 @@ def scan(candles, label, min_gap, min_size, recent):
             if p2 - p1 < min_gap: continue
             trough = min(c["low"] for c in candles[idx1:idx2+1])
             if p2 - trough < min_size: continue
-            if VOLUME_CONFIRM and v2 < v1: continue
             if not momentum_down(candles, idx2): continue
             if last_idx - idx2 > recent: continue
             alerts.append({
-                "title": f"⬇️ SHORT SETUP [{label}]",
-                "msg":   (f"1st peak ${p1:,.0f} → 2nd peak ${p2:,.0f} (+${p2-p1:,.0f})\n"
+                "title": f"SHORT SETUP [{label}]",
+                "msg":   (f"1st peak ${p1:,.0f} to 2nd peak ${p2:,.0f} (+${p2-p1:,.0f})\n"
                           f"Wave: ${p2-trough:,.0f} tall | TP: ~${p1:,.0f} | Now: ${price:,.0f}"),
                 "priority": "urgent"
             })
 
-    # ── LONG SETUP ───────────────────────────────────────────────────────────
+    # LONG SETUP
     # Mirror of short — 2nd low goes deeper than 1st
     if len(lows) >= 2:
         for i in range(len(lows) - 1):
@@ -119,34 +115,32 @@ def scan(candles, label, min_gap, min_size, recent):
             if l1 - l2 < min_gap: continue
             peak_b = max(c["high"] for c in candles[idx1:idx2+1])
             if peak_b - l2 < min_size: continue
-            if VOLUME_CONFIRM and v2 < v1: continue
             if not momentum_up(candles, idx2): continue
             if last_idx - idx2 > recent: continue
             alerts.append({
-                "title": f"⬆️ LONG SETUP [{label}]",
-                "msg":   (f"1st low ${l1:,.0f} → 2nd low ${l2:,.0f} (-${l1-l2:,.0f})\n"
+                "title": f"LONG SETUP [{label}]",
+                "msg":   (f"1st low ${l1:,.0f} to 2nd low ${l2:,.0f} (-${l1-l2:,.0f})\n"
                           f"Wave: ${peak_b-l2:,.0f} tall | TP: ~${l1:,.0f} | Now: ${price:,.0f}"),
                 "priority": "urgent"
             })
 
-    # ── HIGH VOLUME SPIKE ─────────────────────────────────────────────────────
-    # Volume 3x average = unexpected big move — half profit only
+    # HIGH VOLUME SPIKE — half profit only
     if len(candles) >= 25:
         avg_vol = sum(c["volume"] for c in candles[-25:-5]) / 20
-        for i in range(max(0, last_idx - 10), last_idx - 2):
-            c = candles[i]
-            if c["volume"] < avg_vol * 3: continue
-            move = abs(c["close"] - c["open"])
-            if move < min_size * 0.5: continue
-            direction = "DOWN" if c["close"] < c["open"] else "UP"
-            icon      = "⬇️" if direction == "DOWN" else "⬆️"
-            half_tp   = (c["close"] - move * 0.5) if direction == "DOWN" else (c["close"] + move * 0.5)
-            alerts.append({
-                "title": f"{icon} HIGH VOL SPIKE [{label}] — HALF PROFIT",
-                "msg":   (f"Vol {c['volume']:,.0f} = {c['volume']/avg_vol:.1f}x normal\n"
-                          f"Move ${move:,.0f} {direction} | Half TP: ~${half_tp:,.0f} | Now: ${price:,.0f}"),
-                "priority": "high"
-            })
+        if avg_vol > 0:
+            for i in range(max(0, last_idx - 10), last_idx - 2):
+                c = candles[i]
+                if c["volume"] < avg_vol * 3: continue
+                move = abs(c["close"] - c["open"])
+                if move < min_size * 0.5: continue
+                direction = "DOWN" if c["close"] < c["open"] else "UP"
+                half_tp   = (c["close"] - move * 0.5) if direction == "DOWN" else (c["close"] + move * 0.5)
+                alerts.append({
+                    "title": f"HIGH VOL SPIKE [{label}] - HALF PROFIT",
+                    "msg":   (f"Big move ${move:,.0f} {direction}\n"
+                              f"Half TP: ~${half_tp:,.0f} | Now: ${price:,.0f}"),
+                    "priority": "high"
+                })
 
     return alerts
 
@@ -154,8 +148,7 @@ def main():
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     print(f"[{now}] BTC Wave Scanner starting...")
 
-    # Notify phone that scan is starting
-    notify("🔍 BTC Scanner Running", f"Scanning 1m, 5m, 15m at {now}", priority="low")
+    notify("BTC Scanner Running", f"Scanning 1m, 5m, 15m at {now}", priority="low")
 
     all_alerts = []
     errors     = []
@@ -164,7 +157,7 @@ def main():
         try:
             candles = get_candles(tf["interval"], tf["candles"])
             price   = candles[-1]["close"]
-            print(f"  [{tf['label']}] Price: ${price:,.0f} — scanning {len(candles)} candles")
+            print(f"  [{tf['label']}] Price: ${price:,.0f} | {len(candles)} candles")
             found = scan(candles, tf["label"], tf["min_gap"], tf["min_size"], tf["recent"])
             all_alerts.extend(found)
             if found:
@@ -176,20 +169,14 @@ def main():
             print(f"  {err}")
             errors.append(err)
 
-    # Send alerts
     if all_alerts:
         for a in all_alerts:
             notify(a["title"], a["msg"], a.get("priority", "urgent"))
     else:
-        print("  No setups detected on any timeframe.")
+        print("  No setups detected.")
 
-    # Notify if errors occurred
     if errors:
-        notify(
-            "⚠️ Scanner Error",
-            "Errors occurred:\n" + "\n".join(errors),
-            priority="high"
-        )
+        notify("Scanner Error", "Errors:\n" + "\n".join(errors), priority="high")
 
     print("Done.")
 
