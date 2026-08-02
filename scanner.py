@@ -1,27 +1,55 @@
 import requests
 import time
-from datetime import datetime
+import json
+import os
+from datetime import datetime, timezone
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
-NTFY_TOPIC     = "btcwave554433"
-PEAK_WINDOW    = 3    # smaller window since we have fewer candles
-MOMENTUM_BARS  = 2    # 2 consecutive candles to confirm (not 3, fewer candles)
-
-# Single set of thresholds since all candles are same timeframe
-MIN_GAP  = 100   # 2nd peak must beat 1st by $100
-MIN_SIZE = 150   # wave must be $150 tall
-RECENT   = 15    # 2nd peak within last 15 candles
+NTFY_TOPIC      = "btcwave554433"
+PEAK_WINDOW     = 3
+MOMENTUM_BARS   = 2
+MIN_GAP         = 100    # 2nd peak must beat 1st by $100
+MIN_SIZE        = 150    # wave must be $150 tall
+RECENT          = 15     # 2nd peak/low within last 15 candles
+COOLDOWN_MIN    = 30     # block same direction within 30 minutes
+STATE_FILE      = "scanner_state.json"   # persists cooldown across runs
 # ─────────────────────────────────────────────────────────────────────────────
 
+def load_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"last_signal": {}}   # {"long": "2026-07-30T12:00:00", "short": ...}
+
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+def in_cooldown(state, direction):
+    """Return (True, minutes_remaining) if still in cooldown, else (False, 0)."""
+    last_str = state["last_signal"].get(direction)
+    if not last_str:
+        return False, 0
+    last = datetime.fromisoformat(last_str)
+    elapsed = (datetime.now() - last).total_seconds() / 60
+    if elapsed < COOLDOWN_MIN:
+        return True, int(COOLDOWN_MIN - elapsed)
+    return False, 0
+
 def notify(title, msg, priority="default"):
+    safe_title = title.encode("ascii", "ignore").decode("ascii")
+    safe_msg   = msg.encode("ascii", "ignore").decode("ascii")
     try:
-        requests.post(
+        r = requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
-            data=msg.encode("utf-8"),
-            headers={"Title": title, "Priority": priority},
+            data=safe_msg.encode("utf-8"),
+            headers={"Title": safe_title, "Priority": priority},
             timeout=10
         )
-        print(f"  Ntfy sent: {title}")
+        print(f"  Ntfy sent ({r.status_code}): {safe_title}")
     except Exception as e:
         print(f"  Ntfy failed: {e}")
 
@@ -72,11 +100,7 @@ def scan(candles):
     last_idx = len(candles) - 1
     alerts   = []
 
-    # SHORT SETUP
-    # 1. 2nd peak beats 1st by MIN_GAP
-    # 2. Wave height >= MIN_SIZE
-    # 3. MOMENTUM_BARS consecutive bearish candles after 2nd peak
-    # 4. 2nd peak within last RECENT candles
+    # ── SHORT SETUP ──────────────────────────────────────────────────────────
     if len(peaks) >= 2:
         for i in range(len(peaks) - 1):
             idx1, p1 = peaks[i]
@@ -86,14 +110,19 @@ def scan(candles):
             if p2 - trough < MIN_SIZE: continue
             if not momentum_down(candles, idx2): continue
             if last_idx - idx2 > RECENT: continue
+            # TP = 1st peak (below entry — price should fall back to it)
+            # SL = 2nd peak (if broken upward, wave invalid)
             alerts.append({
+                "direction": "short",
                 "title": "SHORT SETUP - Wave Strategy",
-                "msg":   (f"1st peak ${p1:,.0f} to 2nd peak ${p2:,.0f} (+${p2-p1:,.0f})\n"
-                          f"Wave size: ${p2-trough:,.0f} | TP: ~${p1:,.0f} | Now: ${price:,.0f}"),
+                "msg":  (f"Entry: ~${price:,.0f}\n"
+                         f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}\n"
+                         f"2nd peak ${p2:,.0f} broke 1st ${p1:,.0f} (+${p2-p1:,.0f})\n"
+                         f"Wave: ${p2-trough:,.0f} tall"),
                 "priority": "urgent"
             })
 
-    # LONG SETUP — mirror of short
+    # ── LONG SETUP ───────────────────────────────────────────────────────────
     if len(lows) >= 2:
         for i in range(len(lows) - 1):
             idx1, l1 = lows[i]
@@ -103,20 +132,27 @@ def scan(candles):
             if peak_b - l2 < MIN_SIZE: continue
             if not momentum_up(candles, idx2): continue
             if last_idx - idx2 > RECENT: continue
+            # TP = peak_b (the high between the lows — ABOVE entry)
+            # SL = l2 (2nd low — if broken, wave invalid)
             alerts.append({
+                "direction": "long",
                 "title": "LONG SETUP - Wave Strategy",
-                "msg":   (f"1st low ${l1:,.0f} to 2nd low ${l2:,.0f} (-${l1-l2:,.0f})\n"
-                          f"Wave size: ${peak_b-l2:,.0f} | TP: ~${l1:,.0f} | Now: ${price:,.0f}"),
+                "msg":  (f"Entry: ~${price:,.0f}\n"
+                         f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}\n"
+                         f"2nd low ${l2:,.0f} broke 1st ${l1:,.0f} (-${l1-l2:,.0f})\n"
+                         f"Wave: ${peak_b-l2:,.0f} tall"),
                 "priority": "urgent"
             })
 
     return alerts
 
 def main():
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    print(f"[{now}] BTC Wave Scanner starting...")
+    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    print(f"[{now_str}] BTC Wave Scanner starting...")
 
-    notify("BTC Scanner Running", f"Scanning at {now}", priority="min")
+    notify("BTC Scanner Running", f"Scanning at {now_str}", priority="min")
+
+    state = load_state()
 
     try:
         candles = get_candles()
@@ -127,8 +163,17 @@ def main():
 
         if alerts:
             for a in alerts:
+                direction = a["direction"]
+                blocked, mins_left = in_cooldown(state, direction)
+                if blocked:
+                    print(f"  [COOLDOWN] {direction.upper()} signal blocked — {mins_left} min remaining")
+                    continue
+
                 notify(a["title"], a["msg"], a.get("priority", "urgent"))
                 print(f"  ALERT: {a['title']}")
+                # Record the signal time to enforce cooldown next run
+                state["last_signal"][direction] = datetime.now().isoformat()
+                save_state(state)
         else:
             print("  No setup detected.")
 
