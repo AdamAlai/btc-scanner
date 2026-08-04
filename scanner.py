@@ -7,8 +7,8 @@ from datetime import datetime
 NTFY_TOPIC      = "btcwave554433"
 PEAK_WINDOW     = 3
 MOMENTUM_BARS   = 2
-MIN_GAP         = 100
-MIN_SIZE        = 150
+MIN_GAP         = 300    # 2nd peak must beat 1st by $300 (filters weak setups)
+MIN_SIZE        = 600    # wave must be $600 tall (filters noise)
 RECENT          = 15
 COOLDOWN_MIN    = 30
 STATE_FILE      = "scanner_state.json"
