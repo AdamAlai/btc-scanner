@@ -7,12 +7,12 @@ from datetime import datetime
 NTFY_TOPIC      = "btcwave554433"
 PEAK_WINDOW     = 3
 MOMENTUM_BARS   = 2
-MIN_GAP         = 300    # 2nd peak must beat 1st by $300 (filters weak setups)
-MIN_SIZE        = 600    # wave must be $600 tall (filters noise)
+MIN_GAP         = 300    # 2nd peak must beat 1st by $300
+MIN_SIZE        = 600    # wave must be $600 tall
 RECENT          = 15
 COOLDOWN_MIN    = 30
 STATE_FILE      = "scanner_state.json"
-POSITION_USD    = 50000   # fixed $50k position for PnL calculation
+POSITION_USD    = 50000   # fixed $50k position
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_state():
@@ -52,7 +52,35 @@ def notify(title, msg, priority="default"):
     except Exception as e:
         print(f"  Ntfy failed: {e}")
 
-def get_candles():
+def get_kraken_candles(interval):
+    """Fetch real OHLC from Kraken. interval: 1, 5, 15 (minutes)."""
+    url = "https://api.kraken.com/0/public/OHLC"
+    params = {"pair": "XBTUSD", "interval": interval}
+    r = requests.get(url, params=params, timeout=15)
+    r.raise_for_status()
+    data = r.json()
+    if data.get("error"):
+        raise Exception(f"Kraken error: {data['error']}")
+    result = data["result"]
+    pair_key = list(result.keys())[0]
+    raw = result[pair_key]
+    if not raw:
+        raise Exception("Kraken returned empty data")
+    candles = []
+    for c in raw:
+        candles.append({
+            "time":  int(c[0]),
+            "open":  float(c[1]),
+            "high":  float(c[2]),
+            "low":   float(c[3]),
+            "close": float(c[4]),
+            "vwap":  float(c[5]),
+            "volume": float(c[6]),
+        })
+    return candles
+
+def get_coingecko_candles():
+    """Fallback if Kraken fails."""
     r = requests.get(
         "https://api.coingecko.com/api/v3/coins/bitcoin/ohlc",
         params={"vs_currency": "usd", "days": "1"},
@@ -90,11 +118,9 @@ def momentum_up(candles, from_idx):
     return all(candles[i]["close"] > candles[i]["open"] for i in range(from_idx + 1, end))
 
 def check_open_trade(state, price):
-    """Check if the open trade hit TP or SL. Send report if closed."""
     trade = state.get("open_trade")
     if not trade:
         return
-
     direction = trade["direction"]
     entry     = trade["entry"]
     tp        = trade["tp"]
@@ -109,7 +135,7 @@ def check_open_trade(state, price):
         elif price >= sl:
             result = "lost"
             exit_price = sl
-    else:  # long
+    else:
         if price >= tp:
             result = "won"
             exit_price = tp
@@ -118,7 +144,7 @@ def check_open_trade(state, price):
             exit_price = sl
 
     if not result:
-        print(f"  Open {direction.upper()} trade still active | Entry: ${entry:,.0f} | TP: ${tp:,.0f} | SL: ${sl:,.0f} | Now: ${price:,.0f}")
+        print(f"  Open {direction.upper()} trade active | Entry: ${entry:,.0f} | TP: ${tp:,.0f} | SL: ${sl:,.0f} | Now: ${price:,.0f}")
         return
 
     pnl = ((entry - exit_price) if direction == "short" else (exit_price - entry)) * qty
@@ -128,9 +154,7 @@ def check_open_trade(state, price):
                f"{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}")
         notify("Trade WON", msg, priority="default")
         print(f"  Trade WON | PnL: ${pnl:+.0f}")
-        # Reset cooldown on win
         state["last_signal"].pop(direction, None)
-
     else:
         move = abs(exit_price - entry)
         loss_report = (
@@ -147,12 +171,11 @@ def check_open_trade(state, price):
         notify("Trade LOST", loss_report, priority="high")
         print(f"  Trade LOST | PnL: ${pnl:+.0f}")
         print(loss_report)
-        # Keep cooldown on loss (block revenge trade)
 
     state["open_trade"] = None
     save_state(state)
 
-def scan(candles):
+def scan_timeframe(candles, label):
     peaks, lows = find_peaks_lows(candles)
     price    = candles[-1]["close"]
     last_idx = len(candles) - 1
@@ -171,13 +194,14 @@ def scan(candles):
             alerts.append({
                 "direction": "short",
                 "signal": "SHORT SETUP - Wave Strategy",
-                "title": "SHORT SETUP - Wave Strategy",
+                "title": f"SELL SIGNAL [{label}]",
                 "msg":  (f"Entry: ~${price:,.0f}\n"
                          f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}\n"
                          f"2nd peak ${p2:,.0f} broke 1st ${p1:,.0f} (+${p2-p1:,.0f})\n"
                          f"Wave: ${p2-trough:,.0f} tall"),
                 "entry": price, "tp": p1, "sl": p2,
-                "priority": "urgent"
+                "priority": "urgent",
+                "timeframe": label,
             })
 
     # LONG
@@ -193,13 +217,14 @@ def scan(candles):
             alerts.append({
                 "direction": "long",
                 "signal": "LONG SETUP - Wave Strategy",
-                "title": "LONG SETUP - Wave Strategy",
+                "title": f"BUY SIGNAL [{label}]",
                 "msg":  (f"Entry: ~${price:,.0f}\n"
                          f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}\n"
                          f"2nd low ${l2:,.0f} broke 1st ${l1:,.0f} (-${l1-l2:,.0f})\n"
                          f"Wave: ${peak_b-l2:,.0f} tall"),
                 "entry": price, "tp": peak_b, "sl": l2,
-                "priority": "urgent"
+                "priority": "urgent",
+                "timeframe": label,
             })
 
     return alerts
@@ -211,54 +236,70 @@ def main():
     notify("BTC Scanner Running", f"Scanning at {now_str}", priority="min")
 
     state = load_state()
+    master_price = None
 
+    # ── 1. Pull data ─────────────────────────────────────────────────────────
     try:
-        candles = get_candles()
-        price   = candles[-1]["close"]
-        print(f"  Price: ${price:,.0f} | {len(candles)} candles loaded")
-
-        # ── 1. Check if open trade hit TP or SL ──────────────────────────────
-        check_open_trade(state, price)
-
-        # ── 2. Scan for new setups ────────────────────────────────────────────
-        # Skip if there's already an open trade (one trade at a time)
-        if state.get("open_trade"):
-            print("  Skipping new signals — trade already open.")
+        candles_1m  = get_kraken_candles(1)
+        candles_5m  = get_kraken_candles(5)
+        candles_15m = get_kraken_candles(15)
+        timeframes  = [("1m", candles_1m), ("5m", candles_5m), ("15m", candles_15m)]
+        master_price = candles_1m[-1]["close"]
+        print(f"  Kraken OK | 1m:{len(candles_1m)} 5m:{len(candles_5m)} 15m:{len(candles_15m)} candles")
+    except Exception as e:
+        print(f"  Kraken failed: {e}")
+        try:
+            cg = get_coingecko_candles()
+            timeframes = [("live", cg)]
+            master_price = cg[-1]["close"]
+            print(f"  CoinGecko fallback | {len(cg)} candles")
+        except Exception as e2:
+            err = f"All data sources failed: {e2}"
+            print(f"  {err}")
+            notify("Scanner Error", err, priority="high")
             return
 
-        alerts = scan(candles)
+    # ── 2. Check open trade ──────────────────────────────────────────────────
+    check_open_trade(state, master_price)
 
-        if alerts:
-            for a in alerts:
-                direction = a["direction"]
-                blocked, mins_left = in_cooldown(state, direction)
-                if blocked:
-                    print(f"  [COOLDOWN] {direction.upper()} blocked — {mins_left} min remaining")
-                    continue
+    # ── 3. Scan for new setups ───────────────────────────────────────────────
+    if state.get("open_trade"):
+        print("  Skipping new signals — trade already open.")
+        return
 
-                notify(a["title"], a["msg"], a.get("priority", "urgent"))
-                print(f"  ALERT: {a['title']}")
+    all_alerts = []
+    for label, candles in timeframes:
+        alerts = scan_timeframe(candles, label)
+        all_alerts.extend(alerts)
 
-                # Save trade to state so next run can track TP/SL
-                state["open_trade"] = {
-                    "direction": direction,
-                    "signal":    a["signal"],
-                    "entry":     a["entry"],
-                    "tp":        a["tp"],
-                    "sl":        a["sl"],
-                    "time":      now_str,
-                }
-                state["last_signal"][direction] = datetime.now().isoformat()
-                save_state(state)
-                break  # one trade at a time
+    if all_alerts:
+        # Priority: fastest timeframe wins
+        priority_order = {"1m": 0, "5m": 1, "15m": 2, "live": 3}
+        all_alerts.sort(key=lambda x: priority_order.get(x.get("timeframe", "live"), 99))
 
-        else:
-            print("  No setup detected.")
+        for a in all_alerts:
+            direction = a["direction"]
+            blocked, mins_left = in_cooldown(state, direction)
+            if blocked:
+                print(f"  [COOLDOWN] {direction.upper()} blocked — {mins_left} min remaining")
+                continue
 
-    except Exception as e:
-        err = f"Error: {e}"
-        print(f"  {err}")
-        notify("Scanner Error", err, priority="high")
+            notify(a["title"], a["msg"], a.get("priority", "urgent"))
+            print(f"  ALERT: {a['title']}")
+
+            state["open_trade"] = {
+                "direction": direction,
+                "signal":    a["signal"],
+                "entry":     a["entry"],
+                "tp":        a["tp"],
+                "sl":        a["sl"],
+                "time":      now_str,
+            }
+            state["last_signal"][direction] = datetime.now().isoformat()
+            save_state(state)
+            break  # one trade at a time
+    else:
+        print("  No setup detected.")
 
     print("Done.")
 
