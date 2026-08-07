@@ -3,17 +3,16 @@ import json
 import os
 from datetime import datetime
 
-# ── CONFIG ───────────────────────────────────────────────────────────────────
 NTFY_TOPIC      = "btcwave554433"
 PEAK_WINDOW     = 3
 MOMENTUM_BARS   = 2
-MIN_GAP         = 300    # 2nd peak must beat 1st by $300
-MIN_SIZE        = 600    # wave must be $600 tall
+MIN_GAP         = 300
+MIN_SIZE        = 600
 RECENT          = 15
 COOLDOWN_MIN    = 30
 STATE_FILE      = "scanner_state.json"
-POSITION_USD    = 50000   # fixed $50k position
-# ─────────────────────────────────────────────────────────────────────────────
+POSITION_USD    = 50000
+DEBUG           = os.environ.get("DEBUG", "0") == "1"
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -53,7 +52,6 @@ def notify(title, msg, priority="default"):
         print(f"  Ntfy failed: {e}")
 
 def get_kraken_candles(interval):
-    """Fetch real OHLC from Kraken. interval: 1, 5, 15 (minutes)."""
     url = "https://api.kraken.com/0/public/OHLC"
     params = {"pair": "XBTUSD", "interval": interval}
     r = requests.get(url, params=params, timeout=15)
@@ -64,8 +62,6 @@ def get_kraken_candles(interval):
     result = data["result"]
     pair_key = list(result.keys())[0]
     raw = result[pair_key]
-    if not raw:
-        raise Exception("Kraken returned empty data")
     candles = []
     for c in raw:
         candles.append({
@@ -80,7 +76,6 @@ def get_kraken_candles(interval):
     return candles
 
 def get_coingecko_candles():
-    """Fallback if Kraken fails."""
     r = requests.get(
         "https://api.coingecko.com/api/v3/coins/bitcoin/ohlc",
         params={"vs_currency": "usd", "days": "1"},
@@ -130,28 +125,22 @@ def check_open_trade(state, price):
     result = None
     if direction == "short":
         if price <= tp:
-            result = "won"
-            exit_price = tp
+            result = "won"; exit_price = tp
         elif price >= sl:
-            result = "lost"
-            exit_price = sl
+            result = "lost"; exit_price = sl
     else:
         if price >= tp:
-            result = "won"
-            exit_price = tp
+            result = "won"; exit_price = tp
         elif price <= sl:
-            result = "lost"
-            exit_price = sl
+            result = "lost"; exit_price = sl
 
     if not result:
-        print(f"  Open {direction.upper()} trade active | Entry: ${entry:,.0f} | TP: ${tp:,.0f} | SL: ${sl:,.0f} | Now: ${price:,.0f}")
+        print(f"  Open {direction.upper()} active | Entry ${entry:,.0f} | TP ${tp:,.0f} | SL ${sl:,.0f} | Now ${price:,.0f}")
         return
 
     pnl = ((entry - exit_price) if direction == "short" else (exit_price - entry)) * qty
-
     if result == "won":
-        msg = (f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n"
-               f"{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}")
+        msg = f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}"
         notify("Trade WON", msg, priority="default")
         print(f"  Trade WON | PnL: ${pnl:+.0f}")
         state["last_signal"].pop(direction, None)
@@ -171,7 +160,6 @@ def check_open_trade(state, price):
         notify("Trade LOST", loss_report, priority="high")
         print(f"  Trade LOST | PnL: ${pnl:+.0f}")
         print(loss_report)
-
     state["open_trade"] = None
     save_state(state)
 
@@ -181,16 +169,43 @@ def scan_timeframe(candles, label):
     last_idx = len(candles) - 1
     alerts   = []
 
-    # SHORT
+    if DEBUG:
+        print(f"\n  [{label}] DEBUG — Last 5 peaks:")
+        for idx, p in peaks[-5:]:
+            age = last_idx - idx
+            print(f"    idx={idx} price=${p:,.0f} age={age}bars")
+        print(f"  [{label}] DEBUG — Last 5 lows:")
+        for idx, l in lows[-5:]:
+            age = last_idx - idx
+            print(f"    idx={idx} price=${l:,.0f} age={age}bars")
+
     if len(peaks) >= 2:
         for i in range(len(peaks) - 1):
             idx1, p1 = peaks[i]
             idx2, p2 = peaks[i + 1]
-            if p2 - p1 < MIN_GAP: continue
+            gap   = p2 - p1
             trough = min(c["low"] for c in candles[idx1:idx2+1])
-            if p2 - trough < MIN_SIZE: continue
-            if not momentum_down(candles, idx2): continue
-            if last_idx - idx2 > RECENT: continue
+            size  = p2 - trough
+            mom   = momentum_down(candles, idx2)
+            age   = last_idx - idx2
+            recent_ok = age <= RECENT
+
+            if DEBUG:
+                status = []
+                if gap < MIN_GAP:          status.append(f"gap ${gap:.0f} < ${MIN_GAP}")
+                if size < MIN_SIZE:        status.append(f"size ${size:.0f} < ${MIN_SIZE}")
+                if not mom:                status.append("no momentum")
+                if not recent_ok:         status.append(f"too old ({age}bars)")
+                if not status:
+                    print(f"  [{label}] DEBUG SHORT idx1={idx1} idx2={idx2} -> PASS | gap=${gap:.0f} size=${size:.0f} age={age}")
+                else:
+                    print(f"  [{label}] DEBUG SHORT idx1={idx1} idx2={idx2} -> FAIL: {', '.join(status)}")
+
+            if gap < MIN_GAP: continue
+            if size < MIN_SIZE: continue
+            if not mom: continue
+            if not recent_ok: continue
+
             alerts.append({
                 "direction": "short",
                 "signal": "SHORT SETUP - Wave Strategy",
@@ -204,16 +219,33 @@ def scan_timeframe(candles, label):
                 "timeframe": label,
             })
 
-    # LONG
     if len(lows) >= 2:
         for i in range(len(lows) - 1):
             idx1, l1 = lows[i]
             idx2, l2 = lows[i + 1]
-            if l1 - l2 < MIN_GAP: continue
+            gap   = l1 - l2
             peak_b = max(c["high"] for c in candles[idx1:idx2+1])
-            if peak_b - l2 < MIN_SIZE: continue
-            if not momentum_up(candles, idx2): continue
-            if last_idx - idx2 > RECENT: continue
+            size  = peak_b - l2
+            mom   = momentum_up(candles, idx2)
+            age   = last_idx - idx2
+            recent_ok = age <= RECENT
+
+            if DEBUG:
+                status = []
+                if gap < MIN_GAP:          status.append(f"gap ${gap:.0f} < ${MIN_GAP}")
+                if size < MIN_SIZE:        status.append(f"size ${size:.0f} < ${MIN_SIZE}")
+                if not mom:                status.append("no momentum")
+                if not recent_ok:         status.append(f"too old ({age}bars)")
+                if not status:
+                    print(f"  [{label}] DEBUG LONG  idx1={idx1} idx2={idx2} -> PASS | gap=${gap:.0f} size=${size:.0f} age={age}")
+                else:
+                    print(f"  [{label}] DEBUG LONG  idx1={idx1} idx2={idx2} -> FAIL: {', '.join(status)}")
+
+            if gap < MIN_GAP: continue
+            if size < MIN_SIZE: continue
+            if not mom: continue
+            if not recent_ok: continue
+
             alerts.append({
                 "direction": "long",
                 "signal": "LONG SETUP - Wave Strategy",
@@ -232,13 +264,13 @@ def scan_timeframe(candles, label):
 def main():
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     print(f"[{now_str}] BTC Wave Scanner starting...")
+    if DEBUG:
+        print("  *** DEBUG MODE ON ***")
 
     notify("BTC Scanner Running", f"Scanning at {now_str}", priority="min")
-
     state = load_state()
     master_price = None
 
-    # ── 1. Pull data ─────────────────────────────────────────────────────────
     try:
         candles_1m  = get_kraken_candles(1)
         candles_5m  = get_kraken_candles(5)
@@ -259,10 +291,8 @@ def main():
             notify("Scanner Error", err, priority="high")
             return
 
-    # ── 2. Check open trade ──────────────────────────────────────────────────
     check_open_trade(state, master_price)
 
-    # ── 3. Scan for new setups ───────────────────────────────────────────────
     if state.get("open_trade"):
         print("  Skipping new signals — trade already open.")
         return
@@ -273,7 +303,6 @@ def main():
         all_alerts.extend(alerts)
 
     if all_alerts:
-        # Priority: fastest timeframe wins
         priority_order = {"1m": 0, "5m": 1, "15m": 2, "live": 3}
         all_alerts.sort(key=lambda x: priority_order.get(x.get("timeframe", "live"), 99))
 
@@ -283,10 +312,8 @@ def main():
             if blocked:
                 print(f"  [COOLDOWN] {direction.upper()} blocked — {mins_left} min remaining")
                 continue
-
             notify(a["title"], a["msg"], a.get("priority", "urgent"))
             print(f"  ALERT: {a['title']}")
-
             state["open_trade"] = {
                 "direction": direction,
                 "signal":    a["signal"],
@@ -297,7 +324,7 @@ def main():
             }
             state["last_signal"][direction] = datetime.now().isoformat()
             save_state(state)
-            break  # one trade at a time
+            break
     else:
         print("  No setup detected.")
 
