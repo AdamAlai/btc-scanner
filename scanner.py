@@ -1,18 +1,22 @@
 import requests
 import json
 import os
+import sys
 from datetime import datetime
 
+# ── CONFIG ───────────────────────────────────────────────────────────────────
 NTFY_TOPIC      = "btcwave554433"
 PEAK_WINDOW     = 3
 MOMENTUM_BARS   = 2
-MIN_GAP         = 300
-MIN_SIZE        = 600
+MIN_GAP         = 300    # 2nd peak must beat 1st by $300
+MIN_SIZE        = 600    # wave must be $600 tall
 RECENT          = 15
 COOLDOWN_MIN    = 30
 STATE_FILE      = "scanner_state.json"
 POSITION_USD    = 50000
-DEBUG           = os.environ.get("DEBUG", "0") == "1"
+# ─────────────────────────────────────────────────────────────────────────────
+
+DEBUG = "--debug" in sys.argv  # run with: python scanner.py --debug
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -62,15 +66,17 @@ def get_kraken_candles(interval):
     result = data["result"]
     pair_key = list(result.keys())[0]
     raw = result[pair_key]
+    if not raw:
+        raise Exception("Kraken returned empty data")
     candles = []
     for c in raw:
         candles.append({
-            "time":  int(c[0]),
-            "open":  float(c[1]),
-            "high":  float(c[2]),
-            "low":   float(c[3]),
-            "close": float(c[4]),
-            "vwap":  float(c[5]),
+            "time":   int(c[0]),
+            "open":   float(c[1]),
+            "high":   float(c[2]),
+            "low":    float(c[3]),
+            "close":  float(c[4]),
+            "vwap":   float(c[5]),
             "volume": float(c[6]),
         })
     return candles
@@ -112,6 +118,12 @@ def momentum_up(candles, from_idx):
     if end > len(candles): return False
     return all(candles[i]["close"] > candles[i]["open"] for i in range(from_idx + 1, end))
 
+def ts(candle):
+    """Human-readable timestamp from candle."""
+    if "time" in candle:
+        return datetime.utcfromtimestamp(candle["time"]).strftime("%H:%M")
+    return "??"
+
 def check_open_trade(state, price):
     trade = state.get("open_trade")
     if not trade:
@@ -125,22 +137,28 @@ def check_open_trade(state, price):
     result = None
     if direction == "short":
         if price <= tp:
-            result = "won"; exit_price = tp
+            result = "won"
+            exit_price = tp
         elif price >= sl:
-            result = "lost"; exit_price = sl
+            result = "lost"
+            exit_price = sl
     else:
         if price >= tp:
-            result = "won"; exit_price = tp
+            result = "won"
+            exit_price = tp
         elif price <= sl:
-            result = "lost"; exit_price = sl
+            result = "lost"
+            exit_price = sl
 
     if not result:
-        print(f"  Open {direction.upper()} active | Entry ${entry:,.0f} | TP ${tp:,.0f} | SL ${sl:,.0f} | Now ${price:,.0f}")
+        print(f"  Open {direction.upper()} trade active | Entry: ${entry:,.0f} | TP: ${tp:,.0f} | SL: ${sl:,.0f} | Now: ${price:,.0f}")
         return
 
     pnl = ((entry - exit_price) if direction == "short" else (exit_price - entry)) * qty
+
     if result == "won":
-        msg = f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}"
+        msg = (f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n"
+               f"{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}")
         notify("Trade WON", msg, priority="default")
         print(f"  Trade WON | PnL: ${pnl:+.0f}")
         state["last_signal"].pop(direction, None)
@@ -160,8 +178,73 @@ def check_open_trade(state, price):
         notify("Trade LOST", loss_report, priority="high")
         print(f"  Trade LOST | PnL: ${pnl:+.0f}")
         print(loss_report)
+
     state["open_trade"] = None
     save_state(state)
+
+def debug_timeframe(candles, label):
+    print(f"\n{'='*60}")
+    print(f"DEBUG [{label}] — {len(candles)} candles")
+    print(f"  Range: {ts(candles[0])} UTC → {ts(candles[-1])} UTC")
+    print(f"  Price range: ${min(c['low'] for c in candles):,.0f} — ${max(c['high'] for c in candles):,.0f}")
+
+    peaks, lows = find_peaks_lows(candles)
+    last_idx = len(candles) - 1
+    price = candles[-1]["close"]
+
+    print(f"\n  PEAKS found ({len(peaks)}):")
+    for idx, p in peaks:
+        age = last_idx - idx
+        print(f"    [{ts(candles[idx])}] ${p:,.0f}  (age: {age} bars)")
+
+    print(f"\n  LOWS found ({len(lows)}):")
+    for idx, l in lows:
+        age = last_idx - idx
+        print(f"    [{ts(candles[idx])}] ${l:,.0f}  (age: {age} bars)")
+
+    print(f"\n  SHORT setup checks:")
+    if len(peaks) < 2:
+        print(f"    SKIP — need 2+ peaks, only have {len(peaks)}")
+    else:
+        for i in range(len(peaks) - 1):
+            idx1, p1 = peaks[i]
+            idx2, p2 = peaks[i + 1]
+            trough = min(c["low"] for c in candles[idx1:idx2+1])
+            age = last_idx - idx2
+            gap = p2 - p1
+            size = p2 - trough
+            mom = momentum_down(candles, idx2)
+            print(f"\n    Peak1={ts(candles[idx1])} ${p1:,.0f} → Peak2={ts(candles[idx2])} ${p2:,.0f}")
+            print(f"      GAP:      ${gap:,.0f}  (need >=${MIN_GAP}) → {'OK' if gap >= MIN_GAP else 'FAIL'}")
+            print(f"      SIZE:     ${size:,.0f}  (need >={MIN_SIZE}) → {'OK' if size >= MIN_SIZE else 'FAIL'}")
+            print(f"      MOMENTUM: {mom}  (need 2 red candles after peak2) → {'OK' if mom else 'FAIL'}")
+            print(f"      AGE:      {age} bars  (need <={RECENT}) → {'OK' if age <= RECENT else 'FAIL'}")
+            if gap >= MIN_GAP and size >= MIN_SIZE and mom and age <= RECENT:
+                print(f"      >>> WOULD FIRE SELL SIGNAL at ${price:,.0f}")
+            else:
+                print(f"      >>> NO SIGNAL")
+
+    print(f"\n  LONG setup checks:")
+    if len(lows) < 2:
+        print(f"    SKIP — need 2+ lows, only have {len(lows)}")
+    else:
+        for i in range(len(lows) - 1):
+            idx1, l1 = lows[i]
+            idx2, l2 = lows[i + 1]
+            peak_b = max(c["high"] for c in candles[idx1:idx2+1])
+            age = last_idx - idx2
+            gap = l1 - l2
+            size = peak_b - l2
+            mom = momentum_up(candles, idx2)
+            print(f"\n    Low1={ts(candles[idx1])} ${l1:,.0f} → Low2={ts(candles[idx2])} ${l2:,.0f}")
+            print(f"      GAP:      ${gap:,.0f}  (need >={MIN_GAP}) → {'OK' if gap >= MIN_GAP else 'FAIL'}")
+            print(f"      SIZE:     ${size:,.0f}  (need >={MIN_SIZE}) → {'OK' if size >= MIN_SIZE else 'FAIL'}")
+            print(f"      MOMENTUM: {mom}  (need 2 green candles after low2) → {'OK' if mom else 'FAIL'}")
+            print(f"      AGE:      {age} bars  (need <={RECENT}) → {'OK' if age <= RECENT else 'FAIL'}")
+            if gap >= MIN_GAP and size >= MIN_SIZE and mom and age <= RECENT:
+                print(f"      >>> WOULD FIRE BUY SIGNAL at ${price:,.0f}")
+            else:
+                print(f"      >>> NO SIGNAL")
 
 def scan_timeframe(candles, label):
     peaks, lows = find_peaks_lows(candles)
@@ -169,43 +252,16 @@ def scan_timeframe(candles, label):
     last_idx = len(candles) - 1
     alerts   = []
 
-    if DEBUG:
-        print(f"\n  [{label}] DEBUG — Last 5 peaks:")
-        for idx, p in peaks[-5:]:
-            age = last_idx - idx
-            print(f"    idx={idx} price=${p:,.0f} age={age}bars")
-        print(f"  [{label}] DEBUG — Last 5 lows:")
-        for idx, l in lows[-5:]:
-            age = last_idx - idx
-            print(f"    idx={idx} price=${l:,.0f} age={age}bars")
-
+    # SHORT
     if len(peaks) >= 2:
         for i in range(len(peaks) - 1):
             idx1, p1 = peaks[i]
             idx2, p2 = peaks[i + 1]
-            gap   = p2 - p1
+            if p2 - p1 < MIN_GAP: continue
             trough = min(c["low"] for c in candles[idx1:idx2+1])
-            size  = p2 - trough
-            mom   = momentum_down(candles, idx2)
-            age   = last_idx - idx2
-            recent_ok = age <= RECENT
-
-            if DEBUG:
-                status = []
-                if gap < MIN_GAP:          status.append(f"gap ${gap:.0f} < ${MIN_GAP}")
-                if size < MIN_SIZE:        status.append(f"size ${size:.0f} < ${MIN_SIZE}")
-                if not mom:                status.append("no momentum")
-                if not recent_ok:         status.append(f"too old ({age}bars)")
-                if not status:
-                    print(f"  [{label}] DEBUG SHORT idx1={idx1} idx2={idx2} -> PASS | gap=${gap:.0f} size=${size:.0f} age={age}")
-                else:
-                    print(f"  [{label}] DEBUG SHORT idx1={idx1} idx2={idx2} -> FAIL: {', '.join(status)}")
-
-            if gap < MIN_GAP: continue
-            if size < MIN_SIZE: continue
-            if not mom: continue
-            if not recent_ok: continue
-
+            if p2 - trough < MIN_SIZE: continue
+            if not momentum_down(candles, idx2): continue
+            if last_idx - idx2 > RECENT: continue
             alerts.append({
                 "direction": "short",
                 "signal": "SHORT SETUP - Wave Strategy",
@@ -219,33 +275,16 @@ def scan_timeframe(candles, label):
                 "timeframe": label,
             })
 
+    # LONG
     if len(lows) >= 2:
         for i in range(len(lows) - 1):
             idx1, l1 = lows[i]
             idx2, l2 = lows[i + 1]
-            gap   = l1 - l2
+            if l1 - l2 < MIN_GAP: continue
             peak_b = max(c["high"] for c in candles[idx1:idx2+1])
-            size  = peak_b - l2
-            mom   = momentum_up(candles, idx2)
-            age   = last_idx - idx2
-            recent_ok = age <= RECENT
-
-            if DEBUG:
-                status = []
-                if gap < MIN_GAP:          status.append(f"gap ${gap:.0f} < ${MIN_GAP}")
-                if size < MIN_SIZE:        status.append(f"size ${size:.0f} < ${MIN_SIZE}")
-                if not mom:                status.append("no momentum")
-                if not recent_ok:         status.append(f"too old ({age}bars)")
-                if not status:
-                    print(f"  [{label}] DEBUG LONG  idx1={idx1} idx2={idx2} -> PASS | gap=${gap:.0f} size=${size:.0f} age={age}")
-                else:
-                    print(f"  [{label}] DEBUG LONG  idx1={idx1} idx2={idx2} -> FAIL: {', '.join(status)}")
-
-            if gap < MIN_GAP: continue
-            if size < MIN_SIZE: continue
-            if not mom: continue
-            if not recent_ok: continue
-
+            if peak_b - l2 < MIN_SIZE: continue
+            if not momentum_up(candles, idx2): continue
+            if last_idx - idx2 > RECENT: continue
             alerts.append({
                 "direction": "long",
                 "signal": "LONG SETUP - Wave Strategy",
@@ -264,10 +303,10 @@ def scan_timeframe(candles, label):
 def main():
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     print(f"[{now_str}] BTC Wave Scanner starting...")
-    if DEBUG:
-        print("  *** DEBUG MODE ON ***")
 
-    notify("BTC Scanner Running", f"Scanning at {now_str}", priority="min")
+    if not DEBUG:
+        notify("BTC Scanner Running", f"Scanning at {now_str}", priority="min")
+
     state = load_state()
     master_price = None
 
@@ -291,6 +330,18 @@ def main():
             notify("Scanner Error", err, priority="high")
             return
 
+    # ── DEBUG MODE ───────────────────────────────────────────────────────────
+    if DEBUG:
+        print(f"\n{'#'*60}")
+        print(f"DEBUG MODE — showing every peak/low and why each setup passed or failed")
+        print(f"{'#'*60}")
+        for label, candles in timeframes:
+            debug_timeframe(candles, label)
+        print(f"\n{'='*60}")
+        print("DEBUG DONE — no alerts sent, no state changed.")
+        return
+
+    # ── Normal mode below ────────────────────────────────────────────────────
     check_open_trade(state, master_price)
 
     if state.get("open_trade"):
@@ -312,8 +363,10 @@ def main():
             if blocked:
                 print(f"  [COOLDOWN] {direction.upper()} blocked — {mins_left} min remaining")
                 continue
+
             notify(a["title"], a["msg"], a.get("priority", "urgent"))
             print(f"  ALERT: {a['title']}")
+
             state["open_trade"] = {
                 "direction": direction,
                 "signal":    a["signal"],
