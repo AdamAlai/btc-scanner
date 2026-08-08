@@ -23,7 +23,7 @@ jobs:
         run: pip install requests
 
       - name: Run scanner
-        run: python scanner.py --debug
+        run: python scanner.py
 
       - name: Save state
         run: |
