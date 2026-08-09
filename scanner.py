@@ -5,18 +5,26 @@ import sys
 from datetime import datetime
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
-NTFY_TOPIC      = "btcwave554433"
-PEAK_WINDOW     = 3
-MOMENTUM_BARS   = 2
-MIN_GAP         = 300    # 2nd peak must beat 1st by $300
-MIN_SIZE        = 600    # wave must be $600 tall
-RECENT          = 15
-COOLDOWN_MIN    = 30
-STATE_FILE      = "scanner_state.json"
-POSITION_USD    = 50000
+NTFY_TOPIC    = "btcwave554433"
+STATE_FILE    = "scanner_state.json"
+POSITION_USD  = 50000
+PEAK_WINDOW   = 3
+MOMENTUM_BARS = 2
+COOLDOWN_MIN  = 30
+
+# Per-timeframe thresholds — tuned to catch real moves without noise
+# GAP  = 2nd peak/low must beat 1st by this much
+# SIZE = total wave height must be at least this
+# RECENT = 2nd peak/low must be within this many bars of the latest candle
+TIMEFRAMES = [
+    {"label": "1m",  "interval": 1,  "gap": 100, "size": 250, "recent": 15, "vol_confirm": True},
+    {"label": "5m",  "interval": 5,  "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
+    {"label": "15m", "interval": 15, "gap": 300, "size": 600, "recent": 15, "vol_confirm": True},
+]
 # ─────────────────────────────────────────────────────────────────────────────
 
-DEBUG = "--debug" in sys.argv  # run with: python scanner.py --debug
+DEBUG = "--debug" in sys.argv
+
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -27,12 +35,15 @@ def load_state():
             pass
     return {"last_signal": {}, "open_trade": None}
 
+
 def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
 
-def in_cooldown(state, direction):
-    last_str = state["last_signal"].get(direction)
+
+def in_cooldown(state, direction, label):
+    key = f"{direction}_{label}"
+    last_str = state["last_signal"].get(key)
     if not last_str:
         return False, 0
     last = datetime.fromisoformat(last_str)
@@ -40,6 +51,7 @@ def in_cooldown(state, direction):
     if elapsed < COOLDOWN_MIN:
         return True, int(COOLDOWN_MIN - elapsed)
     return False, 0
+
 
 def notify(title, msg, priority="default"):
     safe_title = title.encode("ascii", "ignore").decode("ascii")
@@ -55,46 +67,49 @@ def notify(title, msg, priority="default"):
     except Exception as e:
         print(f"  Ntfy failed: {e}")
 
+
 def get_kraken_candles(interval):
     url = "https://api.kraken.com/0/public/OHLC"
     params = {"pair": "XBTUSD", "interval": interval}
     r = requests.get(url, params=params, timeout=15)
     r.raise_for_status()
     data = r.json()
-    if data.get("error"):
+    if data.get("error") and data["error"]:
         raise Exception(f"Kraken error: {data['error']}")
     result = data["result"]
-    pair_key = list(result.keys())[0]
+    pair_key = next(k for k in result.keys() if k != "last")
     raw = result[pair_key]
     if not raw:
-        raise Exception("Kraken returned empty data")
-    candles = []
-    for c in raw:
-        candles.append({
-            "time":   int(c[0]),
-            "open":   float(c[1]),
-            "high":   float(c[2]),
-            "low":    float(c[3]),
-            "close":  float(c[4]),
-            "vwap":   float(c[5]),
-            "volume": float(c[6]),
-        })
-    return candles
+        raise Exception("Kraken returned empty candle data")
+    return [{
+        "time":   int(c[0]),
+        "open":   float(c[1]),
+        "high":   float(c[2]),
+        "low":    float(c[3]),
+        "close":  float(c[4]),
+        "volume": float(c[6]),
+    } for c in raw]
 
-def get_coingecko_candles():
+
+def get_coinbase_candles(interval_minutes):
+    gran_map = {1: 60, 5: 300, 15: 900}
+    gran = gran_map.get(interval_minutes, 60)
     r = requests.get(
-        "https://api.coingecko.com/api/v3/coins/bitcoin/ohlc",
-        params={"vs_currency": "usd", "days": "1"},
-        headers={"User-Agent": "Mozilla/5.0"},
+        "https://api.exchange.coinbase.com/products/BTC-USD/candles",
+        params={"granularity": gran},
         timeout=15
     )
     r.raise_for_status()
+    raw = list(reversed(r.json()))
     return [{
-        "open":  float(c[1]),
-        "high":  float(c[2]),
-        "low":   float(c[3]),
-        "close": float(c[4]),
-    } for c in r.json()]
+        "time":   int(c[0]),
+        "open":   float(c[3]),
+        "high":   float(c[2]),
+        "low":    float(c[1]),
+        "close":  float(c[4]),
+        "volume": float(c[5]),
+    } for c in raw]
+
 
 def find_peaks_lows(candles):
     peaks, lows = [], []
@@ -103,26 +118,29 @@ def find_peaks_lows(candles):
         wh = [c["high"] for c in candles[i-w:i+w+1]]
         wl = [c["low"]  for c in candles[i-w:i+w+1]]
         if candles[i]["high"] == max(wh) and candles[i]["high"] > min(wh) + 20:
-            peaks.append((i, candles[i]["high"]))
+            peaks.append((i, candles[i]["high"], candles[i]["volume"]))
         if candles[i]["low"] == min(wl) and candles[i]["low"] < max(wl) - 20:
-            lows.append((i, candles[i]["low"]))
+            lows.append((i, candles[i]["low"], candles[i]["volume"]))
     return peaks, lows
+
 
 def momentum_down(candles, from_idx):
     end = from_idx + 1 + MOMENTUM_BARS
     if end > len(candles): return False
     return all(candles[i]["close"] < candles[i]["open"] for i in range(from_idx + 1, end))
 
+
 def momentum_up(candles, from_idx):
     end = from_idx + 1 + MOMENTUM_BARS
     if end > len(candles): return False
     return all(candles[i]["close"] > candles[i]["open"] for i in range(from_idx + 1, end))
 
+
 def ts(candle):
-    """Human-readable timestamp from candle."""
     if "time" in candle:
         return datetime.utcfromtimestamp(candle["time"]).strftime("%H:%M")
     return "??"
+
 
 def check_open_trade(state, price):
     trade = state.get("open_trade")
@@ -135,38 +153,36 @@ def check_open_trade(state, price):
     qty       = POSITION_USD / entry
 
     result = None
+    exit_price = None
     if direction == "short":
         if price <= tp:
-            result = "won"
-            exit_price = tp
+            result, exit_price = "won", tp
         elif price >= sl:
-            result = "lost"
-            exit_price = sl
+            result, exit_price = "lost", sl
     else:
         if price >= tp:
-            result = "won"
-            exit_price = tp
+            result, exit_price = "won", tp
         elif price <= sl:
-            result = "lost"
-            exit_price = sl
+            result, exit_price = "lost", sl
 
     if not result:
-        print(f"  Open {direction.upper()} trade active | Entry: ${entry:,.0f} | TP: ${tp:,.0f} | SL: ${sl:,.0f} | Now: ${price:,.0f}")
+        print(f"  Open {direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f} | SL: ${sl:,.0f} | Now: ${price:,.0f}")
         return
 
     pnl = ((entry - exit_price) if direction == "short" else (exit_price - entry)) * qty
 
     if result == "won":
-        msg = (f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n"
-               f"{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}")
-        notify("Trade WON", msg, priority="default")
+        notify("Trade WON",
+               f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}",
+               priority="default")
         print(f"  Trade WON | PnL: ${pnl:+.0f}")
-        state["last_signal"].pop(direction, None)
+        state["last_signal"].pop(f"{direction}_{trade.get('timeframe','')}", None)
     else:
         move = abs(exit_price - entry)
         loss_report = (
             f"TRADE LOSS REPORT\n"
             f"Signal: {trade.get('signal', 'N/A')}\n"
+            f"Timeframe: {trade.get('timeframe', 'N/A')}\n"
             f"Direction: {direction.upper()}\n"
             f"Entry: ${entry:,.0f}\n"
             f"Target: ${tp:,.0f} (needed ${abs(tp-entry):,.0f} {'up' if direction=='long' else 'down'})\n"
@@ -182,123 +198,126 @@ def check_open_trade(state, price):
     state["open_trade"] = None
     save_state(state)
 
-def debug_timeframe(candles, label):
-    print(f"\n{'='*60}")
-    print(f"DEBUG [{label}] — {len(candles)} candles")
-    print(f"  Range: {ts(candles[0])} UTC → {ts(candles[-1])} UTC")
-    print(f"  Price range: ${min(c['low'] for c in candles):,.0f} — ${max(c['high'] for c in candles):,.0f}")
 
-    peaks, lows = find_peaks_lows(candles)
-    last_idx = len(candles) - 1
-    price = candles[-1]["close"]
+def scan_timeframe(candles, tf):
+    label       = tf["label"]
+    min_gap     = tf["gap"]
+    min_size    = tf["size"]
+    recent      = tf["recent"]
+    vol_confirm = tf["vol_confirm"]
 
-    print(f"\n  PEAKS found ({len(peaks)}):")
-    for idx, p in peaks:
-        age = last_idx - idx
-        print(f"    [{ts(candles[idx])}] ${p:,.0f}  (age: {age} bars)")
-
-    print(f"\n  LOWS found ({len(lows)}):")
-    for idx, l in lows:
-        age = last_idx - idx
-        print(f"    [{ts(candles[idx])}] ${l:,.0f}  (age: {age} bars)")
-
-    print(f"\n  SHORT setup checks:")
-    if len(peaks) < 2:
-        print(f"    SKIP — need 2+ peaks, only have {len(peaks)}")
-    else:
-        for i in range(len(peaks) - 1):
-            idx1, p1 = peaks[i]
-            idx2, p2 = peaks[i + 1]
-            trough = min(c["low"] for c in candles[idx1:idx2+1])
-            age = last_idx - idx2
-            gap = p2 - p1
-            size = p2 - trough
-            mom = momentum_down(candles, idx2)
-            print(f"\n    Peak1={ts(candles[idx1])} ${p1:,.0f} → Peak2={ts(candles[idx2])} ${p2:,.0f}")
-            print(f"      GAP:      ${gap:,.0f}  (need >=${MIN_GAP}) → {'OK' if gap >= MIN_GAP else 'FAIL'}")
-            print(f"      SIZE:     ${size:,.0f}  (need >={MIN_SIZE}) → {'OK' if size >= MIN_SIZE else 'FAIL'}")
-            print(f"      MOMENTUM: {mom}  (need 2 red candles after peak2) → {'OK' if mom else 'FAIL'}")
-            print(f"      AGE:      {age} bars  (need <={RECENT}) → {'OK' if age <= RECENT else 'FAIL'}")
-            if gap >= MIN_GAP and size >= MIN_SIZE and mom and age <= RECENT:
-                print(f"      >>> WOULD FIRE SELL SIGNAL at ${price:,.0f}")
-            else:
-                print(f"      >>> NO SIGNAL")
-
-    print(f"\n  LONG setup checks:")
-    if len(lows) < 2:
-        print(f"    SKIP — need 2+ lows, only have {len(lows)}")
-    else:
-        for i in range(len(lows) - 1):
-            idx1, l1 = lows[i]
-            idx2, l2 = lows[i + 1]
-            peak_b = max(c["high"] for c in candles[idx1:idx2+1])
-            age = last_idx - idx2
-            gap = l1 - l2
-            size = peak_b - l2
-            mom = momentum_up(candles, idx2)
-            print(f"\n    Low1={ts(candles[idx1])} ${l1:,.0f} → Low2={ts(candles[idx2])} ${l2:,.0f}")
-            print(f"      GAP:      ${gap:,.0f}  (need >={MIN_GAP}) → {'OK' if gap >= MIN_GAP else 'FAIL'}")
-            print(f"      SIZE:     ${size:,.0f}  (need >={MIN_SIZE}) → {'OK' if size >= MIN_SIZE else 'FAIL'}")
-            print(f"      MOMENTUM: {mom}  (need 2 green candles after low2) → {'OK' if mom else 'FAIL'}")
-            print(f"      AGE:      {age} bars  (need <={RECENT}) → {'OK' if age <= RECENT else 'FAIL'}")
-            if gap >= MIN_GAP and size >= MIN_SIZE and mom and age <= RECENT:
-                print(f"      >>> WOULD FIRE BUY SIGNAL at ${price:,.0f}")
-            else:
-                print(f"      >>> NO SIGNAL")
-
-def scan_timeframe(candles, label):
     peaks, lows = find_peaks_lows(candles)
     price    = candles[-1]["close"]
     last_idx = len(candles) - 1
     alerts   = []
 
-    # SHORT
     if len(peaks) >= 2:
         for i in range(len(peaks) - 1):
-            idx1, p1 = peaks[i]
-            idx2, p2 = peaks[i + 1]
-            if p2 - p1 < MIN_GAP: continue
+            idx1, p1, v1 = peaks[i]
+            idx2, p2, v2 = peaks[i + 1]
+            if p2 - p1 < min_gap: continue
             trough = min(c["low"] for c in candles[idx1:idx2+1])
-            if p2 - trough < MIN_SIZE: continue
+            if p2 - trough < min_size: continue
+            if vol_confirm and v2 < v1: continue
             if not momentum_down(candles, idx2): continue
-            if last_idx - idx2 > RECENT: continue
+            if last_idx - idx2 > recent: continue
             alerts.append({
                 "direction": "short",
-                "signal": "SHORT SETUP - Wave Strategy",
-                "title": f"SELL SIGNAL [{label}]",
-                "msg":  (f"Entry: ~${price:,.0f}\n"
-                         f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}\n"
-                         f"2nd peak ${p2:,.0f} broke 1st ${p1:,.0f} (+${p2-p1:,.0f})\n"
-                         f"Wave: ${p2-trough:,.0f} tall"),
-                "entry": price, "tp": p1, "sl": p2,
-                "priority": "urgent",
-                "timeframe": label,
+                "signal":    "SHORT SETUP - Wave Strategy",
+                "title":     f"SELL SIGNAL [{label}]",
+                "msg":       (f"Entry: ~${price:,.0f}\n"
+                              f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}\n"
+                              f"2nd peak ${p2:,.0f} broke 1st ${p1:,.0f} (+${p2-p1:,.0f})\n"
+                              f"Wave: ${p2-trough:,.0f} tall"),
+                "entry":     price, "tp": p1, "sl": p2,
+                "priority":  "urgent", "timeframe": label,
             })
 
-    # LONG
     if len(lows) >= 2:
         for i in range(len(lows) - 1):
-            idx1, l1 = lows[i]
-            idx2, l2 = lows[i + 1]
-            if l1 - l2 < MIN_GAP: continue
+            idx1, l1, v1 = lows[i]
+            idx2, l2, v2 = lows[i + 1]
+            if l1 - l2 < min_gap: continue
             peak_b = max(c["high"] for c in candles[idx1:idx2+1])
-            if peak_b - l2 < MIN_SIZE: continue
+            if peak_b - l2 < min_size: continue
+            if vol_confirm and v2 < v1: continue
             if not momentum_up(candles, idx2): continue
-            if last_idx - idx2 > RECENT: continue
+            if last_idx - idx2 > recent: continue
             alerts.append({
                 "direction": "long",
-                "signal": "LONG SETUP - Wave Strategy",
-                "title": f"BUY SIGNAL [{label}]",
-                "msg":  (f"Entry: ~${price:,.0f}\n"
-                         f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}\n"
-                         f"2nd low ${l2:,.0f} broke 1st ${l1:,.0f} (-${l1-l2:,.0f})\n"
-                         f"Wave: ${peak_b-l2:,.0f} tall"),
-                "entry": price, "tp": peak_b, "sl": l2,
-                "priority": "urgent",
-                "timeframe": label,
+                "signal":    "LONG SETUP - Wave Strategy",
+                "title":     f"BUY SIGNAL [{label}]",
+                "msg":       (f"Entry: ~${price:,.0f}\n"
+                              f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}\n"
+                              f"2nd low ${l2:,.0f} broke 1st ${l1:,.0f} (-${l1-l2:,.0f})\n"
+                              f"Wave: ${peak_b-l2:,.0f} tall"),
+                "entry":     price, "tp": peak_b, "sl": l2,
+                "priority":  "urgent", "timeframe": label,
             })
 
     return alerts
+
+
+def debug_timeframe(candles, tf):
+    label       = tf["label"]
+    min_gap     = tf["gap"]
+    min_size    = tf["size"]
+    recent      = tf["recent"]
+    vol_confirm = tf["vol_confirm"]
+
+    print(f"\n{'='*60}")
+    print(f"DEBUG [{label}] — {len(candles)} candles | gap>=${min_gap} size>=${min_size} recent<={recent} vol={vol_confirm}")
+    print(f"  Range: {ts(candles[0])} -> {ts(candles[-1])} UTC")
+    print(f"  Price range: ${min(c['low'] for c in candles):,.0f} - ${max(c['high'] for c in candles):,.0f}")
+
+    peaks, lows = find_peaks_lows(candles)
+    last_idx = len(candles) - 1
+    price = candles[-1]["close"]
+
+    print(f"\n  PEAKS ({len(peaks)}):")
+    for idx, p, v in peaks:
+        print(f"    [{ts(candles[idx])}] ${p:,.0f}  vol={v:.2f}  age={last_idx-idx}")
+
+    print(f"\n  LOWS ({len(lows)}):")
+    for idx, l, v in lows:
+        print(f"    [{ts(candles[idx])}] ${l:,.0f}  vol={v:.2f}  age={last_idx-idx}")
+
+    print(f"\n  SHORT checks:")
+    for i in range(len(peaks) - 1):
+        idx1, p1, v1 = peaks[i]
+        idx2, p2, v2 = peaks[i + 1]
+        trough = min(c["low"] for c in candles[idx1:idx2+1])
+        gap, size, age = p2-p1, p2-trough, last_idx-idx2
+        mom = momentum_down(candles, idx2)
+        vol_ok = v2 >= v1 if vol_confirm else True
+        print(f"\n    {ts(candles[idx1])} ${p1:,.0f} -> {ts(candles[idx2])} ${p2:,.0f}")
+        print(f"      GAP ${gap:,.0f} (>={min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
+        print(f"      SIZE ${size:,.0f} (>={min_size}) {'OK' if size>=min_size else 'FAIL'}")
+        print(f"      VOL v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
+        print(f"      MOM {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
+        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent:
+            print(f"      >>> WOULD FIRE SELL at ${price:,.0f}")
+        else:
+            print(f"      >>> NO SIGNAL")
+
+    print(f"\n  LONG checks:")
+    for i in range(len(lows) - 1):
+        idx1, l1, v1 = lows[i]
+        idx2, l2, v2 = lows[i + 1]
+        peak_b = max(c["high"] for c in candles[idx1:idx2+1])
+        gap, size, age = l1-l2, peak_b-l2, last_idx-idx2
+        mom = momentum_up(candles, idx2)
+        vol_ok = v2 >= v1 if vol_confirm else True
+        print(f"\n    {ts(candles[idx1])} ${l1:,.0f} -> {ts(candles[idx2])} ${l2:,.0f}")
+        print(f"      GAP ${gap:,.0f} (>={min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
+        print(f"      SIZE ${size:,.0f} (>={min_size}) {'OK' if size>=min_size else 'FAIL'}")
+        print(f"      VOL v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
+        print(f"      MOM {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
+        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent:
+            print(f"      >>> WOULD FIRE BUY at ${price:,.0f}")
+        else:
+            print(f"      >>> NO SIGNAL")
+
 
 def main():
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
@@ -308,40 +327,39 @@ def main():
         notify("BTC Scanner Running", f"Scanning at {now_str}", priority="min")
 
     state = load_state()
+
+    # Pull candles per timeframe with individual fallback
+    tf_candles = []
     master_price = None
-
-    try:
-        candles_1m  = get_kraken_candles(1)
-        candles_5m  = get_kraken_candles(5)
-        candles_15m = get_kraken_candles(15)
-        timeframes  = [("1m", candles_1m), ("5m", candles_5m), ("15m", candles_15m)]
-        master_price = candles_1m[-1]["close"]
-        print(f"  Kraken OK | 1m:{len(candles_1m)} 5m:{len(candles_5m)} 15m:{len(candles_15m)} candles")
-    except Exception as e:
-        print(f"  Kraken failed: {e}")
+    for tf in TIMEFRAMES:
         try:
-            cg = get_coingecko_candles()
-            timeframes = [("live", cg)]
-            master_price = cg[-1]["close"]
-            print(f"  CoinGecko fallback | {len(cg)} candles")
-        except Exception as e2:
-            err = f"All data sources failed: {e2}"
-            print(f"  {err}")
-            notify("Scanner Error", err, priority="high")
-            return
+            candles = get_kraken_candles(tf["interval"])
+            tf_candles.append((tf, candles))
+            if master_price is None:
+                master_price = candles[-1]["close"]
+            print(f"  Kraken [{tf['label']}] {len(candles)} candles OK")
+        except Exception as e:
+            print(f"  Kraken [{tf['label']}] failed: {e} — trying Coinbase...")
+            try:
+                candles = get_coinbase_candles(tf["interval"])
+                tf_candles.append((tf, candles))
+                if master_price is None:
+                    master_price = candles[-1]["close"]
+                print(f"  Coinbase [{tf['label']}] {len(candles)} candles OK")
+            except Exception as e2:
+                print(f"  [{tf['label']}] both sources failed: {e2} — skipping")
 
-    # ── DEBUG MODE ───────────────────────────────────────────────────────────
-    if DEBUG:
-        print(f"\n{'#'*60}")
-        print(f"DEBUG MODE — showing every peak/low and why each setup passed or failed")
-        print(f"{'#'*60}")
-        for label, candles in timeframes:
-            debug_timeframe(candles, label)
-        print(f"\n{'='*60}")
-        print("DEBUG DONE — no alerts sent, no state changed.")
+    if not tf_candles or master_price is None:
+        notify("Scanner Error", "All data sources failed", priority="high")
         return
 
-    # ── Normal mode below ────────────────────────────────────────────────────
+    if DEBUG:
+        print(f"\n{'#'*60}\nDEBUG MODE\n{'#'*60}")
+        for tf, candles in tf_candles:
+            debug_timeframe(candles, tf)
+        print("\nDEBUG DONE — no alerts sent, no state changed.")
+        return
+
     check_open_trade(state, master_price)
 
     if state.get("open_trade"):
@@ -349,39 +367,42 @@ def main():
         return
 
     all_alerts = []
-    for label, candles in timeframes:
-        alerts = scan_timeframe(candles, label)
-        all_alerts.extend(alerts)
+    for tf, candles in tf_candles:
+        all_alerts.extend(scan_timeframe(candles, tf))
 
-    if all_alerts:
-        priority_order = {"1m": 0, "5m": 1, "15m": 2, "live": 3}
-        all_alerts.sort(key=lambda x: priority_order.get(x.get("timeframe", "live"), 99))
-
-        for a in all_alerts:
-            direction = a["direction"]
-            blocked, mins_left = in_cooldown(state, direction)
-            if blocked:
-                print(f"  [COOLDOWN] {direction.upper()} blocked — {mins_left} min remaining")
-                continue
-
-            notify(a["title"], a["msg"], a.get("priority", "urgent"))
-            print(f"  ALERT: {a['title']}")
-
-            state["open_trade"] = {
-                "direction": direction,
-                "signal":    a["signal"],
-                "entry":     a["entry"],
-                "tp":        a["tp"],
-                "sl":        a["sl"],
-                "time":      now_str,
-            }
-            state["last_signal"][direction] = datetime.now().isoformat()
-            save_state(state)
-            break
-    else:
+    if not all_alerts:
         print("  No setup detected.")
+        return
+
+    priority_order = {"1m": 0, "5m": 1, "15m": 2}
+    all_alerts.sort(key=lambda x: priority_order.get(x.get("timeframe", ""), 99))
+
+    for a in all_alerts:
+        direction = a["direction"]
+        label     = a["timeframe"]
+        blocked, mins_left = in_cooldown(state, direction, label)
+        if blocked:
+            print(f"  [COOLDOWN] {direction.upper()} [{label}] — {mins_left} min remaining")
+            continue
+
+        notify(a["title"], a["msg"], a.get("priority", "urgent"))
+        print(f"  ALERT: {a['title']}")
+
+        state["open_trade"] = {
+            "direction": direction,
+            "signal":    a["signal"],
+            "entry":     a["entry"],
+            "tp":        a["tp"],
+            "sl":        a["sl"],
+            "timeframe": label,
+            "time":      now_str,
+        }
+        state["last_signal"][f"{direction}_{label}"] = datetime.now().isoformat()
+        save_state(state)
+        break
 
     print("Done.")
+
 
 if __name__ == "__main__":
     main()
