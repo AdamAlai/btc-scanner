@@ -2,13 +2,5 @@
   "last_signal": {
     "long_5m": "2026-08-09T23:34:54.571230"
   },
-  "open_trade": {
-    "direction": "long",
-    "signal": "LONG SETUP - Wave Strategy",
-    "entry": 64810.0,
-    "tp": 65425.5,
-    "sl": 64935.7,
-    "timeframe": "5m",
-    "time": "2026-08-09 23:34 UTC"
-  }
+  "open_trade": null
 }
