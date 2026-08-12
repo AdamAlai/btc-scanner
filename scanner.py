@@ -12,14 +12,15 @@ PEAK_WINDOW   = 3
 MOMENTUM_BARS = 2
 COOLDOWN_MIN  = 30
 
-# Per-timeframe thresholds — tuned to catch real moves without noise
-# GAP  = 2nd peak/low must beat 1st by this much
-# SIZE = total wave height must be at least this
+# Per-timeframe thresholds — lowered to catch setups in tight/ranging markets
+# GAP    = 2nd peak/low must beat 1st by this much
+# SIZE   = total wave height must be at least this
 # RECENT = 2nd peak/low must be within this many bars of the latest candle
 TIMEFRAMES = [
-    {"label": "1m",  "interval": 1,  "gap": 100, "size": 250, "recent": 15, "vol_confirm": True},
-    {"label": "5m",  "interval": 5,  "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
-    {"label": "15m", "interval": 15, "gap": 300, "size": 600, "recent": 15, "vol_confirm": True},
+    {"label": "1m",  "interval": 1,  "gap": 100, "size": 200, "recent": 15, "vol_confirm": True},
+    {"label": "5m",  "interval": 5,  "gap": 150, "size": 300, "recent": 15, "vol_confirm": True},
+    {"label": "15m", "interval": 15, "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
+    {"label": "60m", "interval": 60, "gap": 400, "size": 800, "recent": 10, "vol_confirm": True},
 ]
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ def get_kraken_candles(interval):
 
 
 def get_coinbase_candles(interval_minutes):
-    gran_map = {1: 60, 5: 300, 15: 900}
+    gran_map = {1: 60, 5: 300, 15: 900, 60: 3600}
     gran = gran_map.get(interval_minutes, 60)
     r = requests.get(
         "https://api.exchange.coinbase.com/products/BTC-USD/candles",
@@ -291,8 +292,8 @@ def debug_timeframe(candles, tf):
         mom = momentum_down(candles, idx2)
         vol_ok = v2 >= v1 if vol_confirm else True
         print(f"\n    {ts(candles[idx1])} ${p1:,.0f} -> {ts(candles[idx2])} ${p2:,.0f}")
-        print(f"      GAP ${gap:,.0f} (>={min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
-        print(f"      SIZE ${size:,.0f} (>={min_size}) {'OK' if size>=min_size else 'FAIL'}")
+        print(f"      GAP ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
+        print(f"      SIZE ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
         print(f"      VOL v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
         print(f"      MOM {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
         if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent:
@@ -309,8 +310,8 @@ def debug_timeframe(candles, tf):
         mom = momentum_up(candles, idx2)
         vol_ok = v2 >= v1 if vol_confirm else True
         print(f"\n    {ts(candles[idx1])} ${l1:,.0f} -> {ts(candles[idx2])} ${l2:,.0f}")
-        print(f"      GAP ${gap:,.0f} (>={min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
-        print(f"      SIZE ${size:,.0f} (>={min_size}) {'OK' if size>=min_size else 'FAIL'}")
+        print(f"      GAP ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
+        print(f"      SIZE ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
         print(f"      VOL v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
         print(f"      MOM {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
         if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent:
@@ -328,7 +329,6 @@ def main():
 
     state = load_state()
 
-    # Pull candles per timeframe with individual fallback
     tf_candles = []
     master_price = None
     for tf in TIMEFRAMES:
@@ -374,7 +374,7 @@ def main():
         print("  No setup detected.")
         return
 
-    priority_order = {"1m": 0, "5m": 1, "15m": 2}
+    priority_order = {"1m": 0, "5m": 1, "15m": 2, "60m": 3}
     all_alerts.sort(key=lambda x: priority_order.get(x.get("timeframe", ""), 99))
 
     for a in all_alerts:
