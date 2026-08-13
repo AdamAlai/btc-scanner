@@ -4,13 +4,5 @@
     "short_5m": "2026-08-11T21:13:03.155285",
     "long_15m": "2026-08-13T14:55:07.361135"
   },
-  "open_trade": {
-    "direction": "long",
-    "signal": "LONG SETUP - Wave Strategy",
-    "entry": 63839.9,
-    "tp": 63750.5,
-    "sl": 63300.6,
-    "timeframe": "15m",
-    "time": "2026-08-13 14:55 UTC"
-  }
+  "open_trade": null
 }
