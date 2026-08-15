@@ -12,10 +12,6 @@ PEAK_WINDOW   = 3
 MOMENTUM_BARS = 2
 COOLDOWN_MIN  = 30
 
-# Per-timeframe thresholds — lowered to catch setups in tight/ranging markets
-# GAP    = 2nd peak/low must beat 1st by this much
-# SIZE   = total wave height must be at least this
-# RECENT = 2nd peak/low must be within this many bars of the latest candle
 TIMEFRAMES = [
     {"label": "1m",  "interval": 1,  "gap": 100, "size": 200, "recent": 15, "vol_confirm": True},
     {"label": "5m",  "interval": 5,  "gap": 150, "size": 300, "recent": 15, "vol_confirm": True},
@@ -70,9 +66,11 @@ def notify(title, msg, priority="default"):
 
 
 def get_kraken_candles(interval):
-    url = "https://api.kraken.com/0/public/OHLC"
-    params = {"pair": "XBTUSD", "interval": interval}
-    r = requests.get(url, params=params, timeout=15)
+    r = requests.get(
+        "https://api.kraken.com/0/public/OHLC",
+        params={"pair": "XBTUSD", "interval": interval},
+        timeout=15
+    )
     r.raise_for_status()
     data = r.json()
     if data.get("error") and data["error"]:
@@ -212,16 +210,29 @@ def scan_timeframe(candles, tf):
     last_idx = len(candles) - 1
     alerts   = []
 
+    # ── SHORT ────────────────────────────────────────────────────────────────
     if len(peaks) >= 2:
         for i in range(len(peaks) - 1):
             idx1, p1, v1 = peaks[i]
             idx2, p2, v2 = peaks[i + 1]
+
             if p2 - p1 < min_gap: continue
             trough = min(c["low"] for c in candles[idx1:idx2+1])
             if p2 - trough < min_size: continue
-            if vol_confirm and v2 < v1: continue
+            if vol_confirm:
+                avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
+                if v2 < avg_vol * 0.8: continue  # 2nd peak volume must be at least 80% of avg
             if not momentum_down(candles, idx2): continue
             if last_idx - idx2 > recent: continue
+
+            # ── Entry validation ──────────────────────────────────────────
+            # Price must be below 2nd peak (actively falling into entry)
+            if price >= p2: continue
+            # TP (1st peak) must be BELOW entry (room to fall)
+            if p1 >= price: continue
+            # SL (2nd peak) must be ABOVE entry (not already stopped out)
+            if p2 <= price: continue
+
             alerts.append({
                 "direction": "short",
                 "signal":    "SHORT SETUP - Wave Strategy",
@@ -230,20 +241,33 @@ def scan_timeframe(candles, tf):
                               f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}\n"
                               f"2nd peak ${p2:,.0f} broke 1st ${p1:,.0f} (+${p2-p1:,.0f})\n"
                               f"Wave: ${p2-trough:,.0f} tall"),
-                "entry":     price, "tp": p1, "sl": p2,
-                "priority":  "urgent", "timeframe": label,
+                "entry": price, "tp": p1, "sl": p2,
+                "priority": "urgent", "timeframe": label,
             })
 
+    # ── LONG ─────────────────────────────────────────────────────────────────
     if len(lows) >= 2:
         for i in range(len(lows) - 1):
             idx1, l1, v1 = lows[i]
             idx2, l2, v2 = lows[i + 1]
+
             if l1 - l2 < min_gap: continue
             peak_b = max(c["high"] for c in candles[idx1:idx2+1])
             if peak_b - l2 < min_size: continue
-            if vol_confirm and v2 < v1: continue
+            if vol_confirm:
+                avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
+                if v2 < avg_vol * 0.8: continue  # 2nd low volume must be at least 80% of avg
             if not momentum_up(candles, idx2): continue
             if last_idx - idx2 > recent: continue
+
+            # ── Entry validation ──────────────────────────────────────────
+            # Price must be above 2nd low (actively rising from entry)
+            if price <= l2: continue
+            # TP (peak between lows) must be ABOVE entry (room to rise)
+            if peak_b <= price: continue
+            # SL (2nd low) must be BELOW entry (not already stopped out)
+            if l2 >= price: continue
+
             alerts.append({
                 "direction": "long",
                 "signal":    "LONG SETUP - Wave Strategy",
@@ -252,8 +276,8 @@ def scan_timeframe(candles, tf):
                               f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}\n"
                               f"2nd low ${l2:,.0f} broke 1st ${l1:,.0f} (-${l1-l2:,.0f})\n"
                               f"Wave: ${peak_b-l2:,.0f} tall"),
-                "entry":     price, "tp": peak_b, "sl": l2,
-                "priority":  "urgent", "timeframe": label,
+                "entry": price, "tp": peak_b, "sl": l2,
+                "priority": "urgent", "timeframe": label,
             })
 
     return alerts
@@ -288,16 +312,20 @@ def debug_timeframe(candles, tf):
         idx1, p1, v1 = peaks[i]
         idx2, p2, v2 = peaks[i + 1]
         trough = min(c["low"] for c in candles[idx1:idx2+1])
-        gap, size, age = p2-p1, p2-trough, last_idx-idx2
-        mom = momentum_down(candles, idx2)
+        gap  = p2 - p1
+        size = p2 - trough
+        age  = last_idx - idx2
+        mom  = momentum_down(candles, idx2)
         vol_ok = v2 >= v1 if vol_confirm else True
+        entry_ok = price < p2 and p1 < price and p2 > price
         print(f"\n    {ts(candles[idx1])} ${p1:,.0f} -> {ts(candles[idx2])} ${p2:,.0f}")
-        print(f"      GAP ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
-        print(f"      SIZE ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
-        print(f"      VOL v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
-        print(f"      MOM {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
-        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent:
-            print(f"      >>> WOULD FIRE SELL at ${price:,.0f}")
+        print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
+        print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
+        print(f"      VOL   v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
+        print(f"      MOM   {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
+        print(f"      ENTRY price=${price:,.0f} < p2=${p2:,.0f} and p1=${p1:,.0f} < price: {'OK' if entry_ok else 'FAIL'}")
+        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok:
+            print(f"      >>> WOULD FIRE SELL at ${price:,.0f} TP=${p1:,.0f} SL=${p2:,.0f}")
         else:
             print(f"      >>> NO SIGNAL")
 
@@ -306,16 +334,20 @@ def debug_timeframe(candles, tf):
         idx1, l1, v1 = lows[i]
         idx2, l2, v2 = lows[i + 1]
         peak_b = max(c["high"] for c in candles[idx1:idx2+1])
-        gap, size, age = l1-l2, peak_b-l2, last_idx-idx2
-        mom = momentum_up(candles, idx2)
+        gap  = l1 - l2
+        size = peak_b - l2
+        age  = last_idx - idx2
+        mom  = momentum_up(candles, idx2)
         vol_ok = v2 >= v1 if vol_confirm else True
+        entry_ok = price > l2 and peak_b > price and l2 < price
         print(f"\n    {ts(candles[idx1])} ${l1:,.0f} -> {ts(candles[idx2])} ${l2:,.0f}")
-        print(f"      GAP ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
-        print(f"      SIZE ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
-        print(f"      VOL v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
-        print(f"      MOM {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
-        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent:
-            print(f"      >>> WOULD FIRE BUY at ${price:,.0f}")
+        print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
+        print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
+        print(f"      VOL   v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
+        print(f"      MOM   {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
+        print(f"      ENTRY price=${price:,.0f} > l2=${l2:,.0f} and peak_b=${peak_b:,.0f} > price: {'OK' if entry_ok else 'FAIL'}")
+        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok:
+            print(f"      >>> WOULD FIRE BUY at ${price:,.0f} TP=${peak_b:,.0f} SL=${l2:,.0f}")
         else:
             print(f"      >>> NO SIGNAL")
 
