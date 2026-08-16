@@ -149,10 +149,17 @@ def check_open_trade(state, price):
     entry     = trade["entry"]
     tp        = trade["tp"]
     sl        = trade["sl"]
-    qty       = POSITION_USD / entry
 
+    # Spike alerts have no real TP/SL — skip trade tracking for them
+    if trade.get("is_spike"):
+        state["open_trade"] = None
+        save_state(state)
+        return
+
+    qty = POSITION_USD / entry
     result = None
     exit_price = None
+
     if direction == "short":
         if price <= tp:
             result, exit_price = "won", tp
@@ -171,25 +178,24 @@ def check_open_trade(state, price):
     pnl = ((entry - exit_price) if direction == "short" else (exit_price - entry)) * qty
 
     if result == "won":
-        notify("Trade WON",
-               f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}",
-               priority="default")
+        msg = f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}"
+        notify("Trade WON", msg, priority="default")
         print(f"  Trade WON | PnL: ${pnl:+.0f}")
         state["last_signal"].pop(f"{direction}_{trade.get('timeframe','')}", None)
     else:
         move = abs(exit_price - entry)
-        loss_report = (
-            f"TRADE LOSS REPORT\n"
-            f"Signal: {trade.get('signal', 'N/A')}\n"
-            f"Timeframe: {trade.get('timeframe', 'N/A')}\n"
-            f"Direction: {direction.upper()}\n"
-            f"Entry: ${entry:,.0f}\n"
-            f"Target: ${tp:,.0f} (needed ${abs(tp-entry):,.0f} {'up' if direction=='long' else 'down'})\n"
-            f"Stop: ${sl:,.0f} (risked ${abs(sl-entry):,.0f})\n"
-            f"Exit: ${exit_price:,.0f} (moved ${move:,.0f} against you)\n"
-            f"PnL: ${pnl:+.0f} (qty {qty:.4f} BTC)\n"
-            f"Paste to Claude to diagnose."
-        )
+        loss_report = "\n".join([
+            "TRADE LOSS REPORT",
+            f"Signal: {trade.get('signal', 'N/A')}",
+            f"Timeframe: {trade.get('timeframe', 'N/A')}",
+            f"Direction: {direction.upper()}",
+            f"Entry: ${entry:,.0f}",
+            f"Target: ${tp:,.0f} (needed ${abs(tp-entry):,.0f} {'up' if direction=='long' else 'down'})",
+            f"Stop: ${sl:,.0f} (risked ${abs(sl-entry):,.0f})",
+            f"Exit: ${exit_price:,.0f} (moved ${move:,.0f} against you)",
+            f"PnL: ${pnl:+.0f} (qty {qty:.4f} BTC)",
+            "Paste to Claude to diagnose."
+        ])
         notify("Trade LOST", loss_report, priority="high")
         print(f"  Trade LOST | PnL: ${pnl:+.0f}")
         print(loss_report)
@@ -210,74 +216,127 @@ def scan_timeframe(candles, tf):
     last_idx = len(candles) - 1
     alerts   = []
 
-    # ── SHORT ────────────────────────────────────────────────────────────────
+    # ── SHORT (double peak) ───────────────────────────────────────────────────
     if len(peaks) >= 2:
         for i in range(len(peaks) - 1):
             idx1, p1, v1 = peaks[i]
             idx2, p2, v2 = peaks[i + 1]
-
             if p2 - p1 < min_gap: continue
             trough = min(c["low"] for c in candles[idx1:idx2+1])
             if p2 - trough < min_size: continue
             if vol_confirm:
                 avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
-                if v2 < avg_vol * 0.8: continue  # 2nd peak volume must be at least 80% of avg
+                if v2 < avg_vol * 0.8: continue
             if not momentum_down(candles, idx2): continue
             if last_idx - idx2 > recent: continue
-
-            # ── Entry validation ──────────────────────────────────────────
-            # Price must be below 2nd peak (actively falling into entry)
             if price >= p2: continue
-            # TP (1st peak) must be BELOW entry (room to fall)
             if p1 >= price: continue
-            # SL (2nd peak) must be ABOVE entry (not already stopped out)
             if p2 <= price: continue
-
+            msg = "\n".join([
+                f"Entry: ~${price:,.0f}",
+                f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}",
+                f"2nd peak ${p2:,.0f} broke 1st ${p1:,.0f} (+${p2-p1:,.0f})",
+                f"Wave: ${p2-trough:,.0f} tall",
+            ])
             alerts.append({
                 "direction": "short",
                 "signal":    "SHORT SETUP - Wave Strategy",
                 "title":     f"SELL SIGNAL [{label}]",
-                "msg":       (f"Entry: ~${price:,.0f}\n"
-                              f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}\n"
-                              f"2nd peak ${p2:,.0f} broke 1st ${p1:,.0f} (+${p2-p1:,.0f})\n"
-                              f"Wave: ${p2-trough:,.0f} tall"),
+                "msg":       msg,
                 "entry": price, "tp": p1, "sl": p2,
                 "priority": "urgent", "timeframe": label,
             })
 
-    # ── LONG ─────────────────────────────────────────────────────────────────
+    # ── LONG (double low) ─────────────────────────────────────────────────────
     if len(lows) >= 2:
         for i in range(len(lows) - 1):
             idx1, l1, v1 = lows[i]
             idx2, l2, v2 = lows[i + 1]
-
             if l1 - l2 < min_gap: continue
             peak_b = max(c["high"] for c in candles[idx1:idx2+1])
             if peak_b - l2 < min_size: continue
             if vol_confirm:
                 avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
-                if v2 < avg_vol * 0.8: continue  # 2nd low volume must be at least 80% of avg
+                if v2 < avg_vol * 0.8: continue
             if not momentum_up(candles, idx2): continue
             if last_idx - idx2 > recent: continue
-
-            # ── Entry validation ──────────────────────────────────────────
-            # Price must be above 2nd low (actively rising from entry)
             if price <= l2: continue
-            # TP (peak between lows) must be ABOVE entry (room to rise)
             if peak_b <= price: continue
-            # SL (2nd low) must be BELOW entry (not already stopped out)
             if l2 >= price: continue
-
+            msg = "\n".join([
+                f"Entry: ~${price:,.0f}",
+                f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}",
+                f"2nd low ${l2:,.0f} broke 1st ${l1:,.0f} (-${l1-l2:,.0f})",
+                f"Wave: ${peak_b-l2:,.0f} tall",
+            ])
             alerts.append({
                 "direction": "long",
                 "signal":    "LONG SETUP - Wave Strategy",
                 "title":     f"BUY SIGNAL [{label}]",
-                "msg":       (f"Entry: ~${price:,.0f}\n"
-                              f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}\n"
-                              f"2nd low ${l2:,.0f} broke 1st ${l1:,.0f} (-${l1-l2:,.0f})\n"
-                              f"Wave: ${peak_b-l2:,.0f} tall"),
+                "msg":       msg,
                 "entry": price, "tp": peak_b, "sl": l2,
                 "priority": "urgent", "timeframe": label,
+            })
+
+    # ── SUPPORT BREAK SHORT ───────────────────────────────────────────────────
+    # Price made a low, bounced, then broke below that low — bearish breakdown
+    if len(lows) >= 1:
+        for idx1, l1, v1 in lows:
+            if last_idx - idx1 > recent * 2: continue
+            post_candles = candles[idx1:]
+            if len(post_candles) < 4: continue
+            peak_after = max(c["high"] for c in post_candles)
+            if peak_after - l1 < min_gap: continue  # must have had a meaningful bounce
+            if price >= l1: continue                 # price must be BELOW the support now
+            if not momentum_down(candles, last_idx - 1): continue
+            if vol_confirm:
+                avg_vol = sum(c["volume"] for c in candles[max(0,last_idx-20):last_idx]) / 20
+                if candles[last_idx]["volume"] < avg_vol * 0.8: continue
+            drop = l1 - price
+            tp   = price - drop * 1.5
+            sl   = l1 + drop * 0.5
+            if tp >= price: continue
+            if sl <= price: continue
+            msg = "\n".join([
+                f"Entry: ~${price:,.0f}",
+                f"Target: ${tp:,.0f} | Stop: ${sl:,.0f}",
+                f"Broke support at ${l1:,.0f}",
+                f"Bounce was ${peak_after-l1:,.0f} before breakdown",
+            ])
+            alerts.append({
+                "direction": "short",
+                "signal":    "SUPPORT BREAK - Wave Strategy",
+                "title":     f"BREAKDOWN SELL [{label}]",
+                "msg":       msg,
+                "entry": price, "tp": tp, "sl": sl,
+                "priority": "urgent", "timeframe": label,
+            })
+            break  # one breakdown signal at a time
+
+    # ── SPIKE DETECTOR ────────────────────────────────────────────────────────
+    # Fires when a single candle moves 3x+ more than the recent 20-candle average
+    if len(candles) >= 22:
+        last = candles[-1]
+        candle_move = abs(last["close"] - last["open"])
+        avg_move = sum(abs(c["close"] - c["open"]) for c in candles[-21:-1]) / 20
+        spike_ratio = candle_move / avg_move if avg_move > 0 else 0
+        if spike_ratio >= 3.0 and candle_move > min_size * 0.3:
+            direction_word = "UP" if last["close"] > last["open"] else "DOWN"
+            spike_kind = "long" if last["close"] > last["open"] else "short"
+            msg = "\n".join([
+                "Unusual candle detected!",
+                f"Move: ${candle_move:,.0f} ({spike_ratio:.1f}x normal)",
+                f"Price: ${price:,.0f}",
+                "Watch for follow-through or reversal",
+            ])
+            alerts.append({
+                "direction":  spike_kind,
+                "signal":     f"SPIKE {direction_word} - Unusual Move",
+                "title":      f"SPIKE {direction_word} [{label}]",
+                "msg":        msg,
+                "entry": price, "tp": price, "sl": price,
+                "priority":   "high", "timeframe": label,
+                "is_spike":   True,
             })
 
     return alerts
@@ -316,12 +375,13 @@ def debug_timeframe(candles, tf):
         size = p2 - trough
         age  = last_idx - idx2
         mom  = momentum_down(candles, idx2)
-        vol_ok = v2 >= v1 if vol_confirm else True
+        avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
+        vol_ok = v2 >= avg_vol * 0.8 if vol_confirm else True
         entry_ok = price < p2 and p1 < price and p2 > price
         print(f"\n    {ts(candles[idx1])} ${p1:,.0f} -> {ts(candles[idx2])} ${p2:,.0f}")
         print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
         print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
-        print(f"      VOL   v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
+        print(f"      VOL   v2={v2:.2f} avg={avg_vol:.2f} {'OK' if vol_ok else 'FAIL'}")
         print(f"      MOM   {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
         print(f"      ENTRY price=${price:,.0f} < p2=${p2:,.0f} and p1=${p1:,.0f} < price: {'OK' if entry_ok else 'FAIL'}")
         if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok:
@@ -338,12 +398,13 @@ def debug_timeframe(candles, tf):
         size = peak_b - l2
         age  = last_idx - idx2
         mom  = momentum_up(candles, idx2)
-        vol_ok = v2 >= v1 if vol_confirm else True
+        avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
+        vol_ok = v2 >= avg_vol * 0.8 if vol_confirm else True
         entry_ok = price > l2 and peak_b > price and l2 < price
         print(f"\n    {ts(candles[idx1])} ${l1:,.0f} -> {ts(candles[idx2])} ${l2:,.0f}")
         print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
         print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
-        print(f"      VOL   v2={v2:.2f} v1={v1:.2f} {'OK' if vol_ok else 'FAIL'}")
+        print(f"      VOL   v2={v2:.2f} avg={avg_vol:.2f} {'OK' if vol_ok else 'FAIL'}")
         print(f"      MOM   {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
         print(f"      ENTRY price=${price:,.0f} > l2=${l2:,.0f} and peak_b=${peak_b:,.0f} > price: {'OK' if entry_ok else 'FAIL'}")
         if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok:
@@ -410,8 +471,16 @@ def main():
     all_alerts.sort(key=lambda x: priority_order.get(x.get("timeframe", ""), 99))
 
     for a in all_alerts:
-        direction = a["direction"]
-        label     = a["timeframe"]
+        direction  = a["direction"]
+        label      = a["timeframe"]
+        is_spike   = a.get("is_spike", False)
+
+        # Spikes bypass cooldown and open trade tracking — info only
+        if is_spike:
+            notify(a["title"], a["msg"], a["priority"])
+            print(f"  SPIKE ALERT: {a['title']}")
+            continue
+
         blocked, mins_left = in_cooldown(state, direction, label)
         if blocked:
             print(f"  [COOLDOWN] {direction.upper()} [{label}] — {mins_left} min remaining")
