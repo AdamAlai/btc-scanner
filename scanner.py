@@ -5,7 +5,7 @@ import sys
 from datetime import datetime
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
-NTFY_TOPIC    = "btcwave554433"
+NTFY_TOPIC    = os.environ.get("NTFY_TOPIC", "btcwave554433")
 STATE_FILE    = "scanner_state.json"
 POSITION_USD  = 50000
 PEAK_WINDOW   = 3
