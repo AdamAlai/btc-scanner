@@ -201,12 +201,6 @@ def check_open_trade(state, price):
         print(loss_report)
 
     state["open_trade"] = None
-    # After a LOSS: set global cooldown across all timeframes for 30 min
-    # Prevents revenge trading on any timeframe
-    if result == "lost":
-        now_iso = datetime.now().isoformat()
-        for tf in TIMEFRAMES:
-            state["last_signal"][f"{direction}_{tf['label']}"] = now_iso
     save_state(state)
 
 
