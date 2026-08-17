@@ -13,7 +13,7 @@ MOMENTUM_BARS = 2
 COOLDOWN_MIN  = 30
 
 TIMEFRAMES = [
-    {"label": "1m",  "interval": 1,  "gap": 100, "size": 200, "recent": 15, "vol_confirm": True},
+    {"label": "1m",  "interval": 1,  "gap": 150, "size": 250, "recent": 15, "vol_confirm": True},
     {"label": "5m",  "interval": 5,  "gap": 150, "size": 300, "recent": 15, "vol_confirm": True},
     {"label": "15m", "interval": 15, "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
     {"label": "60m", "interval": 60, "gap": 400, "size": 800, "recent": 10, "vol_confirm": True},
@@ -201,6 +201,12 @@ def check_open_trade(state, price):
         print(loss_report)
 
     state["open_trade"] = None
+    # After a LOSS: set global cooldown across all timeframes for 30 min
+    # Prevents revenge trading on any timeframe
+    if result == "lost":
+        now_iso = datetime.now().isoformat()
+        for tf in TIMEFRAMES:
+            state["last_signal"][f"{direction}_{tf['label']}"] = now_iso
     save_state(state)
 
 
@@ -232,6 +238,7 @@ def scan_timeframe(candles, tf):
             if price >= p2: continue
             if p1 >= price: continue
             if p2 <= price: continue
+            if price - p1 < 50: continue  # TP must be at least $50 below entry
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}",
@@ -263,6 +270,7 @@ def scan_timeframe(candles, tf):
             if price <= l2: continue
             if peak_b <= price: continue
             if l2 >= price: continue
+            if peak_b - price < 50: continue  # TP must be at least $50 above entry
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}",
