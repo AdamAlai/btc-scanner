@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATOM Bot</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    color: #00ff88;
+    font-family: 'Share Tech Mono', monospace;
+    min-height: 100vh;
+    padding: 16px;
+  }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #00ff8833;
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .logo {
+    font-size: 1.6rem;
+    letter-spacing: 6px;
+    color: #00ff88;
+    text-shadow: 0 0 20px #00ff8855;
+  }
+
+  .logo span { color: #fff; }
+
+  .bot-switcher {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .bot-btn {
+    background: none;
+    border: 1px solid #333;
+    color: #555;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    padding: 6px 14px;
+    cursor: pointer;
+    letter-spacing: 2px;
+    transition: all 0.2s;
+  }
+
+  .bot-btn.active {
+    border-color: #00ff88;
+    color: #00ff88;
+    text-shadow: 0 0 8px #00ff88;
+  }
+
+  .bot-btn.soon {
+    color: #333;
+    border-color: #222;
+    cursor: not-allowed;
+  }
+
+  .price-bar {
+    text-align: center;
+    margin-bottom: 24px;
+  }
+
+  .price-val {
+    font-size: 2.8rem;
+    letter-spacing: 4px;
+    color: #fff;
+  }
+
+  .price-change {
+    font-size: 0.85rem;
+    letter-spacing: 2px;
+    margin-top: 4px;
+  }
+
+  .price-change.up { color: #00ff88; }
+  .price-change.down { color: #ff4444; }
+
+  .last-update {
+    font-size: 0.65rem;
+    color: #333;
+    margin-top: 4px;
+    letter-spacing: 1px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  @media (max-width: 600px) {
+    .grid { grid-template-columns: 1fr; }
+    .price-val { font-size: 2rem; }
+  }
+
+  .card {
+    border: 1px solid #00ff8822;
+    padding: 16px;
+    background: #050505;
+  }
+
+  .card-title {
+    font-size: 0.65rem;
+    letter-spacing: 3px;
+    color: #555;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #111;
+    padding-bottom: 8px;
+  }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 0.8rem;
+  }
+
+  .stat-label { color: #555; }
+  .stat-val { color: #fff; }
+  .stat-val.green { color: #00ff88; }
+  .stat-val.red { color: #ff4444; }
+  .stat-val.yellow { color: #ffcc00; }
+
+  .open-trade {
+    border: 1px solid #00ff8844;
+    padding: 16px;
+    margin-bottom: 16px;
+    background: #050505;
+    position: relative;
+  }
+
+  .open-trade.long { border-color: #00ff8844; }
+  .open-trade.short { border-color: #ff444444; }
+  .open-trade.none { border-color: #222; }
+
+  .trade-direction {
+    font-size: 1.1rem;
+    letter-spacing: 4px;
+    margin-bottom: 10px;
+  }
+
+  .trade-direction.long { color: #00ff88; }
+  .trade-direction.short { color: #ff4444; }
+  .trade-direction.none { color: #333; }
+
+  .trade-pnl {
+    font-size: 1.4rem;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+  }
+
+  .pulse {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: #00ff88;
+    border-radius: 50%;
+    margin-right: 8px;
+    animation: pulse 1.5s infinite;
+  }
+
+  .pulse.red { background: #ff4444; }
+  .pulse.grey { background: #333; animation: none; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+
+  .section-title {
+    font-size: 0.65rem;
+    letter-spacing: 3px;
+    color: #555;
+    margin-bottom: 10px;
+    margin-top: 20px;
+    border-bottom: 1px solid #111;
+    padding-bottom: 8px;
+  }
+
+  .trade-list { display: flex; flex-direction: column; gap: 6px; }
+
+  .trade-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: #080808;
+    border-left: 3px solid #333;
+    font-size: 0.75rem;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .trade-item.won { border-left-color: #00ff88; }
+  .trade-item.lost { border-left-color: #ff4444; }
+
+  .trade-meta { color: #555; font-size: 0.65rem; }
+  .trade-pnl-small.won { color: #00ff88; }
+  .trade-pnl-small.lost { color: #ff4444; }
+
+  .no-data { color: #333; font-size: 0.8rem; padding: 16px 0; }
+
+  .progress-bar {
+    height: 4px;
+    background: #111;
+    margin-top: 6px;
+    position: relative;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: #00ff88;
+    transition: width 0.5s;
+  }
+
+  .footer {
+    margin-top: 30px;
+    text-align: center;
+    font-size: 0.6rem;
+    color: #222;
+    letter-spacing: 2px;
+  }
+
+  .blink { animation: blink 1s step-end infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+  .loading { color: #333; font-size: 0.8rem; letter-spacing: 2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">ATOM <span>BOT</span></div>
+  <div class="bot-switcher">
+    <button class="bot-btn active" onclick="switchBot('atom')">ATOM</button>
+    <button class="bot-btn soon" title="Coming soon">OROCHI</button>
+    <button class="bot-btn soon" title="Coming soon">TJR</button>
+  </div>
+</div>
+
+<!-- Live Price -->
+<div class="price-bar">
+  <div class="price-val" id="price">Loading...</div>
+  <div class="price-change" id="price-change">--</div>
+  <div class="last-update" id="last-update">fetching price...</div>
+</div>
+
+<!-- Open Trade -->
+<div class="open-trade none" id="open-trade-card">
+  <div class="trade-direction none">
+    <span class="pulse grey"></span>NO OPEN TRADE
+  </div>
+  <div class="loading" id="open-trade-content">loading...</div>
+</div>
+
+<!-- Stats Grid -->
+<div class="grid">
+  <div class="card">
+    <div class="card-title">PERFORMANCE</div>
+    <div class="stat-row">
+      <span class="stat-label">Total PnL</span>
+      <span class="stat-val" id="total-pnl">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Win Rate</span>
+      <span class="stat-val" id="win-rate">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Total Trades</span>
+      <span class="stat-val" id="total-trades">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Wins / Losses</span>
+      <span class="stat-val" id="wins-losses">--</span>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="win-bar" style="width:0%"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">AVERAGES</div>
+    <div class="stat-row">
+      <span class="stat-label">Avg Win</span>
+      <span class="stat-val green" id="avg-win">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Avg Loss</span>
+      <span class="stat-val red" id="avg-loss">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Best Trade</span>
+      <span class="stat-val green" id="best-trade">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Worst Trade</span>
+      <span class="stat-val red" id="worst-trade">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Position Size</span>
+      <span class="stat-val yellow">$50,000</span>
+    </div>
+  </div>
+</div>
+
+<!-- Trade History -->
+<div class="section-title">TRADE HISTORY</div>
+<div class="trade-list" id="trade-list">
+  <div class="loading">loading trades...</div>
+</div>
+
+<div class="footer">
+  ATOM BOT &nbsp;|&nbsp; AUTO-REFRESHES EVERY 60s &nbsp;|&nbsp; <span class="blink">■</span> LIVE
+</div>
+
+<script>
+const GITHUB_USER = "AdamAlai";
+const GITHUB_REPO = "btc-scanner";
+const BRANCH = "main";
+
+function raw(file) {
+  return `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/${file}?t=${Date.now()}`;
+}
+
+function fmt(n) {
+  return n >= 0 ? `+$${n.toLocaleString()}` : `-$${Math.abs(n).toLocaleString()}`;
+}
+
+function fmtPrice(n) {
+  return `$${Math.round(n).toLocaleString()}`;
+}
+
+// ── Live BTC price from CoinGecko ────────────────────────────────────────────
+let prevPrice = null;
+async function fetchPrice() {
+  try {
+    const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true");
+    const d = await r.json();
+    const price = d.bitcoin.usd;
+    const change = d.bitcoin.usd_24h_change;
+
+    document.getElementById("price").textContent = `$${price.toLocaleString()}`;
+
+    const chEl = document.getElementById("price-change");
+    chEl.textContent = `${change >= 0 ? "+" : ""}${change.toFixed(2)}% (24h)`;
+    chEl.className = `price-change ${change >= 0 ? "up" : "down"}`;
+
+    document.getElementById("last-update").textContent =
+      `last update: ${new Date().toLocaleTimeString()}`;
+
+    prevPrice = price;
+  } catch(e) {
+    document.getElementById("price").textContent = "unavailable";
+  }
+}
+
+// ── Open Trade ───────────────────────────────────────────────────────────────
+async function fetchState() {
+  try {
+    const r = await fetch(raw("scanner_state.json"));
+    const state = await r.json();
+    const trade = state.open_trade;
+    const card = document.getElementById("open-trade-card");
+    const content = document.getElementById("open-trade-content");
+
+    if (!trade) {
+      card.className = "open-trade none";
+      content.innerHTML = `<div class="trade-direction none"><span class="pulse grey"></span>NO OPEN TRADE</div>`;
+      return;
+    }
+
+    const dir = trade.direction.toUpperCase();
+    const isLong = trade.direction === "long";
+    const price = prevPrice || trade.entry;
+    const qty = 50000 / trade.entry;
+    const rawPnl = (isLong ? price - trade.entry : trade.entry - price) * qty;
+    const pnlColor = rawPnl >= 0 ? "#00ff88" : "#ff4444";
+
+    card.className = `open-trade ${trade.direction}`;
+    content.innerHTML = `
+      <div class="trade-direction ${trade.direction}">
+        <span class="pulse ${isLong ? "" : "red"}"></span>${dir} — ${trade.timeframe}
+      </div>
+      <div class="trade-pnl" style="color:${pnlColor}">${fmt(Math.round(rawPnl))}</div>
+      <div class="stat-row">
+        <span class="stat-label">Entry</span>
+        <span class="stat-val">${fmtPrice(trade.entry)}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Target</span>
+        <span class="stat-val green">${fmtPrice(trade.tp)}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Stop</span>
+        <span class="stat-val red">${fmtPrice(trade.sl)}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Signal</span>
+        <span class="stat-val" style="font-size:0.7rem">${trade.signal}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Opened</span>
+        <span class="stat-val" style="color:#555">${trade.time}</span>
+      </div>
+    `;
+  } catch(e) {
+    document.getElementById("open-trade-content").textContent = "no state file yet";
+  }
+}
+
+// ── Trade Log ────────────────────────────────────────────────────────────────
+async function fetchTradeLog() {
+  try {
+    const r = await fetch(raw("trade_log.json"));
+    if (!r.ok) {
+      document.getElementById("trade-list").innerHTML =
+        `<div class="no-data">no trades logged yet — first trade close will appear here</div>`;
+      setStats([], document);
+      return;
+    }
+    const log = await r.json();
+    renderStats(log);
+    renderTrades(log);
+  } catch(e) {
+    document.getElementById("trade-list").innerHTML =
+      `<div class="no-data">no trades logged yet</div>`;
+  }
+}
+
+function renderStats(log) {
+  if (!log.length) {
+    ["total-pnl","win-rate","total-trades","wins-losses","avg-win","avg-loss","best-trade","worst-trade"]
+      .forEach(id => document.getElementById(id).textContent = "--");
+    return;
+  }
+
+  const wins   = log.filter(t => t.result === "won");
+  const losses = log.filter(t => t.result === "lost");
+  const totalPnl = log.reduce((s, t) => s + t.pnl, 0);
+  const winRate  = (wins.length / log.length * 100).toFixed(1);
+  const avgWin   = wins.length ? wins.reduce((s,t) => s+t.pnl, 0) / wins.length : 0;
+  const avgLoss  = losses.length ? losses.reduce((s,t) => s+t.pnl, 0) / losses.length : 0;
+  const best     = log.reduce((a,b) => b.pnl > a.pnl ? b : a, log[0]);
+  const worst    = log.reduce((a,b) => b.pnl < a.pnl ? b : a, log[0]);
+
+  const pnlEl = document.getElementById("total-pnl");
+  pnlEl.textContent = fmt(Math.round(totalPnl));
+  pnlEl.className = `stat-val ${totalPnl >= 0 ? "green" : "red"}`;
+
+  document.getElementById("win-rate").textContent = `${winRate}%`;
+  document.getElementById("total-trades").textContent = log.length;
+  document.getElementById("wins-losses").textContent = `${wins.length} / ${losses.length}`;
+  document.getElementById("avg-win").textContent = `+$${Math.round(avgWin).toLocaleString()}`;
+  document.getElementById("avg-loss").textContent = `-$${Math.abs(Math.round(avgLoss)).toLocaleString()}`;
+  document.getElementById("best-trade").textContent = fmt(Math.round(best.pnl));
+  document.getElementById("worst-trade").textContent = fmt(Math.round(worst.pnl));
+  document.getElementById("win-bar").style.width = `${winRate}%`;
+}
+
+function renderTrades(log) {
+  const list = document.getElementById("trade-list");
+  if (!log.length) {
+    list.innerHTML = `<div class="no-data">no completed trades yet</div>`;
+    return;
+  }
+
+  const sorted = [...log].reverse(); // newest first
+  list.innerHTML = sorted.map(t => `
+    <div class="trade-item ${t.result}">
+      <div>
+        <div style="color:${t.direction==='long'?'#00ff88':'#ff4444'};letter-spacing:2px">
+          ${t.direction.toUpperCase()} [${t.timeframe}]
+        </div>
+        <div class="trade-meta">${t.close_time} &nbsp;|&nbsp; Entry ${fmtPrice(t.entry)} → Exit ${fmtPrice(t.exit)}</div>
+        <div class="trade-meta" style="color:#333">${t.signal}</div>
+      </div>
+      <div class="trade-pnl-small ${t.result}" style="font-size:1rem">
+        ${fmt(Math.round(t.pnl))}
+      </div>
+    </div>
+  `).join("");
+}
+
+function switchBot(bot) {
+  document.querySelectorAll(".bot-btn").forEach(b => b.classList.remove("active"));
+  event.target.classList.add("active");
+  // Future: load different bot data based on selection
+}
+
+// ── Init & Auto-refresh ───────────────────────────────────────────────────────
+async function refresh() {
+  await fetchPrice();
+  await fetchState();
+  await fetchTradeLog();
+}
+
+refresh();
+setInterval(fetchPrice, 15000);   // price every 15s
+setInterval(refresh, 60000);      // full refresh every 60s
+</script>
+</body>
+</html>
