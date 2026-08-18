@@ -38,6 +38,39 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
+TRADE_LOG_FILE = "trade_log.json"
+
+
+def load_trade_log():
+    if os.path.exists(TRADE_LOG_FILE):
+        try:
+            with open(TRADE_LOG_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+
+def log_trade(trade, result, exit_price, pnl):
+    log = load_trade_log()
+    log.append({
+        "open_time":  trade.get("time", ""),
+        "close_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "bot":        "ATOM",
+        "signal":     trade.get("signal", ""),
+        "timeframe":  trade.get("timeframe", ""),
+        "direction":  trade.get("direction", ""),
+        "entry":      trade.get("entry", 0),
+        "tp":         trade.get("tp", 0),
+        "sl":         trade.get("sl", 0),
+        "exit":       exit_price,
+        "pnl":        round(pnl, 2),
+        "result":     result,
+    })
+    with open(TRADE_LOG_FILE, "w") as f:
+        json.dump(log, f, indent=2)
+
+
 def in_cooldown(state, direction, label):
     key = f"{direction}_{label}"
     last_str = state["last_signal"].get(key)
@@ -181,6 +214,7 @@ def check_open_trade(state, price):
         msg = f"PnL: ${pnl:+.0f} | Exit: ${exit_price:,.0f}\n{direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f}"
         notify("Trade WON", msg, priority="default")
         print(f"  Trade WON | PnL: ${pnl:+.0f}")
+        log_trade(trade, "won", exit_price, pnl)
         state["last_signal"].pop(f"{direction}_{trade.get('timeframe','')}", None)
     else:
         move = abs(exit_price - entry)
@@ -199,6 +233,7 @@ def check_open_trade(state, price):
         notify("Trade LOST", loss_report, priority="high")
         print(f"  Trade LOST | PnL: ${pnl:+.0f}")
         print(loss_report)
+        log_trade(trade, "lost", exit_price, pnl)
 
     state["open_trade"] = None
     save_state(state)
