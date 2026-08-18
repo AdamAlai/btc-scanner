@@ -27,6 +27,6 @@ jobs:
         run: |
           git config user.name "btc-scanner-bot"
           git config user.email "bot@btcscanner.local"
-          git add scanner_state.json || true
+          git add scanner_state.json trade_log.json || true
           git diff --cached --quiet || git commit -m "state: update after scan"
           git push || true
