@@ -316,8 +316,8 @@ def scan_timeframe(candles, tf):
             break  # one breakdown signal at a time
 
     # ── SPIKE DETECTOR ────────────────────────────────────────────────────────
-    # Fires when a single candle moves 3x+ more than the recent 20-candle average
-    if len(candles) >= 22:
+    # Only on 1m and 5m — on higher timeframes the move is already done by close
+    if label in ("1m", "5m") and len(candles) >= 22:
         last = candles[-1]
         candle_move = abs(last["close"] - last["open"])
         avg_move = sum(abs(c["close"] - c["open"]) for c in candles[-21:-1]) / 20
