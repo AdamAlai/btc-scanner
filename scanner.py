@@ -351,7 +351,7 @@ def scan_timeframe(candles, tf):
             break  # one breakdown signal at a time
 
     # ── SPIKE DETECTOR ────────────────────────────────────────────────────────
-    # Only on 1m and 5m — on higher timeframes the move is already done by close
+    # Single candle spike: one candle moves 3x the 20-candle average
     if label in ("1m", "5m") and len(candles) >= 22:
         last = candles[-1]
         candle_move = abs(last["close"] - last["open"])
@@ -374,6 +374,52 @@ def scan_timeframe(candles, tf):
                 "entry": price, "tp": price, "sl": price,
                 "priority":   "high", "timeframe": label,
                 "is_spike":   True,
+            })
+
+    # ── MOMENTUM SURGE DETECTOR ───────────────────────────────────────────────
+    # Catches big moves that happen across multiple candles (like the $63k->$70k pump)
+    # Looks at cumulative move over last N candles vs average
+    # 1m: check last 10 candles (~10 min), 5m: check last 6 candles (~30 min)
+    surge_window = {"1m": 10, "5m": 6, "15m": 4}.get(label, 0)
+    surge_threshold = {"1m": 300, "5m": 500, "15m": 800}.get(label, 9999)
+
+    if surge_window and len(candles) >= surge_window + 20:
+        window_candles = candles[-surge_window:]
+        surge_open  = window_candles[0]["open"]
+        surge_close = window_candles[-1]["close"]
+        surge_move  = surge_close - surge_open  # positive = up, negative = down
+
+        # Compare to average move over same window size in prior 20 windows
+        historical = []
+        for j in range(1, 21):
+            start = -(surge_window + j)
+            end   = -j
+            chunk = candles[start:end]
+            if len(chunk) == surge_window:
+                historical.append(abs(chunk[-1]["close"] - chunk[0]["open"]))
+        avg_surge = sum(historical) / len(historical) if historical else 0
+
+        surge_abs = abs(surge_move)
+        surge_mult = surge_abs / avg_surge if avg_surge > 0 else 0
+
+        if surge_abs >= surge_threshold and surge_mult >= 2.5:
+            direction_word = "UP" if surge_move > 0 else "DOWN"
+            surge_kind = "long" if surge_move > 0 else "short"
+            msg = "\n".join([
+                f"BIG MOVE {direction_word} DETECTED",
+                f"${surge_abs:,.0f} move in last {surge_window} candles ({surge_mult:.1f}x normal)",
+                f"From ${surge_open:,.0f} to ${surge_close:,.0f}",
+                f"Price now: ${price:,.0f}",
+                "Watch for continuation or reversal",
+            ])
+            alerts.append({
+                "direction":  surge_kind,
+                "signal":     f"SURGE {direction_word} - Momentum",
+                "title":      f"SURGE {direction_word} [{label}]",
+                "msg":        msg,
+                "entry": price, "tp": price, "sl": price,
+                "priority":   "urgent", "timeframe": label,
+                "is_spike":   True,  # bypass cooldown and trade tracking
             })
 
     return alerts
