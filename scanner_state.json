@@ -4,13 +4,5 @@
     "short_5m": "2026-08-20T07:09:32.514612",
     "short_60m": "2026-08-19T22:09:59.329495"
   },
-  "open_trade": {
-    "direction": "short",
-    "signal": "SHORT SETUP - Wave Strategy",
-    "entry": 72599.9,
-    "tp": 72381.1,
-    "sl": 72699.0,
-    "timeframe": "1m",
-    "time": "2026-08-20 16:53 UTC"
-  }
+  "open_trade": null
 }
