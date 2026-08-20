@@ -168,6 +168,17 @@ def momentum_up(candles, from_idx):
     return all(candles[i]["close"] > candles[i]["open"] for i in range(from_idx + 1, end))
 
 
+def ema(candles, period=20):
+    """Calculate EMA of close prices."""
+    if len(candles) < period:
+        return None
+    k = 2 / (period + 1)
+    val = sum(c["close"] for c in candles[:period]) / period
+    for c in candles[period:]:
+        val = c["close"] * k + val * (1 - k)
+    return val
+
+
 def ts(candle):
     if "time" in candle:
         return datetime.utcfromtimestamp(candle["time"]).strftime("%H:%M")
@@ -268,6 +279,12 @@ def scan_timeframe(candles, tf):
             if p1 >= price: continue
             if p2 <= price: continue
             if price - p1 < 50: continue  # TP must be at least $50 below entry
+            # Trend filter: on 15m and 60m, only short if price is below EMA20
+            # Prevents shorting into a strong uptrend
+            if label in ("15m", "60m"):
+                e20 = ema(candles, 20)
+                if e20 and price > e20 * 1.002:  # price more than 0.2% above EMA = uptrend, skip short
+                    continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}",
@@ -300,6 +317,12 @@ def scan_timeframe(candles, tf):
             if peak_b <= price: continue
             if l2 >= price: continue
             if peak_b - price < 50: continue  # TP must be at least $50 above entry
+            # Trend filter: on 15m and 60m, only long if price is above EMA20
+            # Prevents longing into a strong downtrend
+            if label in ("15m", "60m"):
+                e20 = ema(candles, 20)
+                if e20 and price < e20 * 0.998:  # price more than 0.2% below EMA = downtrend, skip long
+                    continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}",
