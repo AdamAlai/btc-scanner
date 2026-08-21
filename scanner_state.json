@@ -11,6 +11,7 @@
     "tp": 73930.0,
     "sl": 75744.2,
     "timeframe": "5m",
-    "time": "2026-08-21 02:23 UTC"
+    "time": "2026-08-21 02:23 UTC",
+    "processing": true
   }
 }
