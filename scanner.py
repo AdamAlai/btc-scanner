@@ -189,6 +189,13 @@ def check_open_trade(state, price):
     trade = state.get("open_trade")
     if not trade:
         return
+    # Guard against duplicate processing from simultaneous workflow runs
+    if trade.get("processing"):
+        print("  Trade already being processed by another run — skipping")
+        return
+    # Mark as processing immediately and save before doing anything else
+    trade["processing"] = True
+    save_state(state)
     direction = trade["direction"]
     entry     = trade["entry"]
     tp        = trade["tp"]
@@ -226,7 +233,9 @@ def check_open_trade(state, price):
         notify("Trade WON", msg, priority="default")
         print(f"  Trade WON | PnL: ${pnl:+.0f}")
         log_trade(trade, "won", exit_price, pnl)
-        state["last_signal"].pop(f"{direction}_{trade.get('timeframe','')}", None)
+        # Reset cooldown on win so fresh setups can fire, but keep it for same timeframe
+        # for 30 min to avoid re-entering the same wave immediately
+        state["last_signal"][f"{direction}_{trade.get('timeframe','')}"] = datetime.now().isoformat()
     else:
         move = abs(exit_price - entry)
         loss_report = "\n".join([
@@ -279,12 +288,10 @@ def scan_timeframe(candles, tf):
             if p1 >= price: continue
             if p2 <= price: continue
             if price - p1 < 50: continue  # TP must be at least $50 below entry
-            # Trend filter: on 15m and 60m, only short if price is below EMA20
-            # Prevents shorting into a strong uptrend
-            if label in ("15m", "60m"):
-                e20 = ema(candles, 20)
-                if e20 and price > e20 * 1.002:  # price more than 0.2% above EMA = uptrend, skip short
-                    continue
+            # Trend filter: only short if price is below EMA20 (not in a strong uptrend)
+            e20 = ema(candles, 20)
+            if e20 and price > e20 * 1.002:
+                continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}",
@@ -317,12 +324,10 @@ def scan_timeframe(candles, tf):
             if peak_b <= price: continue
             if l2 >= price: continue
             if peak_b - price < 50: continue  # TP must be at least $50 above entry
-            # Trend filter: on 15m and 60m, only long if price is above EMA20
-            # Prevents longing into a strong downtrend
-            if label in ("15m", "60m"):
-                e20 = ema(candles, 20)
-                if e20 and price < e20 * 0.998:  # price more than 0.2% below EMA = downtrend, skip long
-                    continue
+            # Trend filter: only long if price is above EMA20 (not in a strong downtrend)
+            e20 = ema(candles, 20)
+            if e20 and price < e20 * 0.998:
+                continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}",
