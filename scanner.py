@@ -13,7 +13,7 @@ MOMENTUM_BARS = 2
 COOLDOWN_MIN  = 30
 
 TIMEFRAMES = [
-    {"label": "1m",  "interval": 1,  "gap": 150, "size": 250, "recent": 15, "vol_confirm": True},
+    {"label": "1m",  "interval": 1,  "gap": 100, "size": 200, "recent": 15, "vol_confirm": True},
     {"label": "5m",  "interval": 5,  "gap": 150, "size": 300, "recent": 15, "vol_confirm": True},
     {"label": "15m", "interval": 15, "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
     {"label": "60m", "interval": 60, "gap": 400, "size": 800, "recent": 10, "vol_confirm": True},
@@ -529,7 +529,7 @@ def main():
     print(f"[{now_str}] BTC Wave Scanner starting...")
 
     if not DEBUG:
-        notify("BTC Scanner Running", f"Scanning at {now_str}", priority="min")
+        pass  # Removed "BTC Scanner Running" ping — only real signals notify
 
     state = load_state()
 
