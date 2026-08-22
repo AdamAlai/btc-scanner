@@ -11,6 +11,7 @@ POSITION_USD  = 50000
 PEAK_WINDOW   = 3
 MOMENTUM_BARS = 2
 COOLDOWN_MIN  = 30
+STALE_HOURS   = 6  # Force-close trades open longer than this
 
 TIMEFRAMES = [
     {"label": "1m",  "interval": 1,  "gap": 100, "size": 200, "recent": 15, "vol_confirm": True},
@@ -169,7 +170,6 @@ def momentum_up(candles, from_idx):
 
 
 def ema(candles, period=20):
-    """Calculate EMA of close prices."""
     if len(candles) < period:
         return None
     k = 2 / (period + 1)
@@ -189,17 +189,55 @@ def check_open_trade(state, price, candles_1m=None):
     trade = state.get("open_trade")
     if not trade:
         return
-    # Guard against duplicate processing from simultaneous workflow runs
-    if trade.get("processing"):
-        print("  Trade already being processed by another run — skipping")
-        return
-    # Mark as processing immediately and save before doing anything else
-    trade["processing"] = True
+
+    # ── TIMESTAMP GUARD: prevent duplicate processing across simultaneous workflows ──
+    # If another run checked this trade within the last 2 minutes, skip
+    last_check_str = trade.get("last_check")
+    if last_check_str:
+        try:
+            last_check = datetime.fromisoformat(last_check_str)
+            elapsed_sec = (datetime.now() - last_check).total_seconds()
+            if elapsed_sec < 120:
+                print(f"  Trade checked {int(elapsed_sec)}s ago — skipping")
+                return
+        except Exception:
+            pass
+
+    # Update check timestamp immediately and save
+    trade["last_check"] = datetime.now().isoformat()
     save_state(state)
+
     direction = trade["direction"]
     entry     = trade["entry"]
     tp        = trade["tp"]
     sl        = trade["sl"]
+
+    # ── STALE TRADE DETECTION ─────────────────────────────────────────────────
+    # If trade has been open longer than STALE_HOURS, force-close it
+    trade_time_str = trade.get("time", "")
+    if trade_time_str:
+        try:
+            trade_time = datetime.strptime(trade_time_str, "%Y-%m-%d %H:%M UTC")
+            hours_open = (datetime.utcnow() - trade_time).total_seconds() / 3600
+            if hours_open > STALE_HOURS:
+                qty = POSITION_USD / entry
+                pnl = ((entry - price) if direction == "short" else (price - entry)) * qty
+                msg = "\n".join([
+                    "STALE TRADE FORCE-CLOSED",
+                    f"Trade was open {hours_open:.1f} hours — exceeded {STALE_HOURS}h limit",
+                    f"Direction: {direction.upper()}",
+                    f"Entry: ${entry:,.0f} | Exit: ${price:,.0f}",
+                    f"PnL: ${pnl:+.0f} (qty {qty:.4f} BTC)",
+                    "The bot missed TP/SL due to scan gaps. Consider a VPS for real-time tracking."
+                ])
+                notify("Trade STALE — Force Closed", msg, priority="high")
+                print(f"  STALE TRADE closed after {hours_open:.1f}h | PnL: ${pnl:+.0f}")
+                log_trade(trade, "stale", price, pnl)
+                state["open_trade"] = None
+                save_state(state)
+                return
+        except Exception:
+            pass
 
     # Spike alerts have no real TP/SL — skip trade tracking for them
     if trade.get("is_spike"):
@@ -212,7 +250,6 @@ def check_open_trade(state, price, candles_1m=None):
     exit_price = None
 
     # Use last 3 candle high/low for accurate TP/SL detection
-    # Catches moves that happened between scanner runs
     if candles_1m and len(candles_1m) >= 3:
         recent = candles_1m[-3:]
         period_high = max(c["high"] for c in recent)
@@ -243,8 +280,6 @@ def check_open_trade(state, price, candles_1m=None):
         notify("Trade WON", msg, priority="default")
         print(f"  Trade WON | PnL: ${pnl:+.0f}")
         log_trade(trade, "won", exit_price, pnl)
-        # Reset cooldown on win so fresh setups can fire, but keep it for same timeframe
-        # for 30 min to avoid re-entering the same wave immediately
         state["last_signal"][f"{direction}_{trade.get('timeframe','')}"] = datetime.now().isoformat()
     else:
         move = abs(exit_price - entry)
@@ -297,8 +332,7 @@ def scan_timeframe(candles, tf):
             if price >= p2: continue
             if p1 >= price: continue
             if p2 <= price: continue
-            if price - p1 < 50: continue  # TP must be at least $50 below entry
-            # Trend filter: only short if price is below EMA20 (not in a strong uptrend)
+            if price - p1 < 50: continue
             e20 = ema(candles, 20)
             if e20 and price > e20 * 1.002:
                 continue
@@ -333,8 +367,7 @@ def scan_timeframe(candles, tf):
             if price <= l2: continue
             if peak_b <= price: continue
             if l2 >= price: continue
-            if peak_b - price < 50: continue  # TP must be at least $50 above entry
-            # Trend filter: only long if price is above EMA20 (not in a strong downtrend)
+            if peak_b - price < 50: continue
             e20 = ema(candles, 20)
             if e20 and price < e20 * 0.998:
                 continue
@@ -354,15 +387,14 @@ def scan_timeframe(candles, tf):
             })
 
     # ── SUPPORT BREAK SHORT ───────────────────────────────────────────────────
-    # Price made a low, bounced, then broke below that low — bearish breakdown
     if len(lows) >= 1:
         for idx1, l1, v1 in lows:
             if last_idx - idx1 > recent * 2: continue
             post_candles = candles[idx1:]
             if len(post_candles) < 4: continue
             peak_after = max(c["high"] for c in post_candles)
-            if peak_after - l1 < min_gap: continue  # must have had a meaningful bounce
-            if price >= l1: continue                 # price must be BELOW the support now
+            if peak_after - l1 < min_gap: continue
+            if price >= l1: continue
             if not momentum_down(candles, last_idx - 1): continue
             if vol_confirm:
                 avg_vol = sum(c["volume"] for c in candles[max(0,last_idx-20):last_idx]) / 20
@@ -386,10 +418,9 @@ def scan_timeframe(candles, tf):
                 "entry": price, "tp": tp, "sl": sl,
                 "priority": "urgent", "timeframe": label,
             })
-            break  # one breakdown signal at a time
+            break
 
     # ── SPIKE DETECTOR ────────────────────────────────────────────────────────
-    # Single candle spike: one candle moves 3x the 20-candle average
     if label in ("1m", "5m") and len(candles) >= 22:
         last = candles[-1]
         candle_move = abs(last["close"] - last["open"])
@@ -415,9 +446,6 @@ def scan_timeframe(candles, tf):
             })
 
     # ── MOMENTUM SURGE DETECTOR ───────────────────────────────────────────────
-    # Catches big moves that happen across multiple candles (like the $63k->$70k pump)
-    # Looks at cumulative move over last N candles vs average
-    # 1m: check last 10 candles (~10 min), 5m: check last 6 candles (~30 min)
     surge_window = {"1m": 10, "5m": 6, "15m": 4}.get(label, 0)
     surge_threshold = {"1m": 300, "5m": 500, "15m": 800}.get(label, 9999)
 
@@ -425,9 +453,8 @@ def scan_timeframe(candles, tf):
         window_candles = candles[-surge_window:]
         surge_open  = window_candles[0]["open"]
         surge_close = window_candles[-1]["close"]
-        surge_move  = surge_close - surge_open  # positive = up, negative = down
+        surge_move  = surge_close - surge_open
 
-        # Compare to average move over same window size in prior 20 windows
         historical = []
         for j in range(1, 21):
             start = -(surge_window + j)
@@ -457,7 +484,7 @@ def scan_timeframe(candles, tf):
                 "msg":        msg,
                 "entry": price, "tp": price, "sl": price,
                 "priority":   "urgent", "timeframe": label,
-                "is_spike":   True,  # bypass cooldown and trade tracking
+                "is_spike":   True,
             })
 
     return alerts
@@ -499,7 +526,7 @@ def debug_timeframe(candles, tf):
         avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
         vol_ok = v2 >= avg_vol * 0.8 if vol_confirm else True
         entry_ok = price < p2 and p1 < price and p2 > price
-        print(f"\n    {ts(candles[idx1])} ${p1:,.0f} -> {ts(candles[idx2])} ${p2:,.0f}")
+        print(f"\n     {ts(candles[idx1])} ${p1:,.0f} -> {ts(candles[idx2])} ${p2:,.0f}")
         print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
         print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
         print(f"      VOL   v2={v2:.2f} avg={avg_vol:.2f} {'OK' if vol_ok else 'FAIL'}")
@@ -538,9 +565,6 @@ def main():
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     print(f"[{now_str}] BTC Wave Scanner starting...")
 
-    if not DEBUG:
-        pass  # Removed "BTC Scanner Running" ping — only real signals notify
-
     state = load_state()
 
     tf_candles = []
@@ -574,7 +598,6 @@ def main():
         print("\nDEBUG DONE — no alerts sent, no state changed.")
         return
 
-    # Pass 1m candles for accurate high/low TP/SL detection
     candles_1m_for_check = next((c for tf, c in tf_candles if tf["label"] == "1m"), None)
     check_open_trade(state, master_price, candles_1m_for_check)
 
@@ -598,7 +621,6 @@ def main():
         label      = a["timeframe"]
         is_spike   = a.get("is_spike", False)
 
-        # Spikes bypass cooldown and open trade tracking — info only
         if is_spike:
             notify(a["title"], a["msg"], a["priority"])
             print(f"  SPIKE ALERT: {a['title']}")
