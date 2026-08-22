@@ -7,11 +7,12 @@ from datetime import datetime
 # ── CONFIG ───────────────────────────────────────────────────────────────────
 NTFY_TOPIC    = os.environ.get("NTFY_TOPIC", "btcwave554433")
 STATE_FILE    = "scanner_state.json"
+TRADE_LOG_FILE = "trade_log.json"
 POSITION_USD  = 50000
 PEAK_WINDOW   = 3
 MOMENTUM_BARS = 2
 COOLDOWN_MIN  = 30
-STALE_HOURS   = 6  # Force-close trades open longer than this
+STALE_HOURS   = 6
 
 TIMEFRAMES = [
     {"label": "1m",  "interval": 1,  "gap": 100, "size": 200, "recent": 15, "vol_confirm": True},
@@ -39,14 +40,13 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
-TRADE_LOG_FILE = "trade_log.json"
-
-
 def load_trade_log():
     if os.path.exists(TRADE_LOG_FILE):
         try:
             with open(TRADE_LOG_FILE) as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
         except Exception:
             pass
     return []
@@ -191,7 +191,6 @@ def check_open_trade(state, price, candles_1m=None):
         return
 
     # ── TIMESTAMP GUARD: prevent duplicate processing across simultaneous workflows ──
-    # If another run checked this trade within the last 2 minutes, skip
     last_check_str = trade.get("last_check")
     if last_check_str:
         try:
@@ -213,7 +212,6 @@ def check_open_trade(state, price, candles_1m=None):
     sl        = trade["sl"]
 
     # ── STALE TRADE DETECTION ─────────────────────────────────────────────────
-    # If trade has been open longer than STALE_HOURS, force-close it
     trade_time_str = trade.get("time", "")
     if trade_time_str:
         try:
@@ -572,83 +570,4 @@ def main():
     for tf in TIMEFRAMES:
         try:
             candles = get_kraken_candles(tf["interval"])
-            tf_candles.append((tf, candles))
-            if master_price is None:
-                master_price = candles[-1]["close"]
-            print(f"  Kraken [{tf['label']}] {len(candles)} candles OK")
-        except Exception as e:
-            print(f"  Kraken [{tf['label']}] failed: {e} — trying Coinbase...")
-            try:
-                candles = get_coinbase_candles(tf["interval"])
-                tf_candles.append((tf, candles))
-                if master_price is None:
-                    master_price = candles[-1]["close"]
-                print(f"  Coinbase [{tf['label']}] {len(candles)} candles OK")
-            except Exception as e2:
-                print(f"  [{tf['label']}] both sources failed: {e2} — skipping")
-
-    if not tf_candles or master_price is None:
-        notify("Scanner Error", "All data sources failed", priority="high")
-        return
-
-    if DEBUG:
-        print(f"\n{'#'*60}\nDEBUG MODE\n{'#'*60}")
-        for tf, candles in tf_candles:
-            debug_timeframe(candles, tf)
-        print("\nDEBUG DONE — no alerts sent, no state changed.")
-        return
-
-    candles_1m_for_check = next((c for tf, c in tf_candles if tf["label"] == "1m"), None)
-    check_open_trade(state, master_price, candles_1m_for_check)
-
-    if state.get("open_trade"):
-        print("  Skipping new signals — trade already open.")
-        return
-
-    all_alerts = []
-    for tf, candles in tf_candles:
-        all_alerts.extend(scan_timeframe(candles, tf))
-
-    if not all_alerts:
-        print("  No setup detected.")
-        return
-
-    priority_order = {"1m": 0, "5m": 1, "15m": 2, "60m": 3}
-    all_alerts.sort(key=lambda x: priority_order.get(x.get("timeframe", ""), 99))
-
-    for a in all_alerts:
-        direction  = a["direction"]
-        label      = a["timeframe"]
-        is_spike   = a.get("is_spike", False)
-
-        if is_spike:
-            notify(a["title"], a["msg"], a["priority"])
-            print(f"  SPIKE ALERT: {a['title']}")
-            continue
-
-        blocked, mins_left = in_cooldown(state, direction, label)
-        if blocked:
-            print(f"  [COOLDOWN] {direction.upper()} [{label}] — {mins_left} min remaining")
-            continue
-
-        notify(a["title"], a["msg"], a.get("priority", "urgent"))
-        print(f"  ALERT: {a['title']}")
-
-        state["open_trade"] = {
-            "direction": direction,
-            "signal":    a["signal"],
-            "entry":     a["entry"],
-            "tp":        a["tp"],
-            "sl":        a["sl"],
-            "timeframe": label,
-            "time":      now_str,
-        }
-        state["last_signal"][f"{direction}_{label}"] = datetime.now().isoformat()
-        save_state(state)
-        break
-
-    print("Done.")
-
-
-if __name__ == "__main__":
-    main()
+            tf_candles.append((tf
