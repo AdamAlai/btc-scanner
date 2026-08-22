@@ -185,7 +185,7 @@ def ts(candle):
     return "??"
 
 
-def check_open_trade(state, price):
+def check_open_trade(state, price, candles_1m=None):
     trade = state.get("open_trade")
     if not trade:
         return
@@ -211,19 +211,29 @@ def check_open_trade(state, price):
     result = None
     exit_price = None
 
+    # Use last 3 candle high/low for accurate TP/SL detection
+    # Catches moves that happened between scanner runs
+    if candles_1m and len(candles_1m) >= 3:
+        recent = candles_1m[-3:]
+        period_high = max(c["high"] for c in recent)
+        period_low  = min(c["low"]  for c in recent)
+    else:
+        period_high = price
+        period_low  = price
+
     if direction == "short":
-        if price <= tp:
+        if period_low <= tp:
             result, exit_price = "won", tp
-        elif price >= sl:
+        elif period_high >= sl:
             result, exit_price = "lost", sl
     else:
-        if price >= tp:
+        if period_high >= tp:
             result, exit_price = "won", tp
-        elif price <= sl:
+        elif period_low <= sl:
             result, exit_price = "lost", sl
 
     if not result:
-        print(f"  Open {direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f} | SL: ${sl:,.0f} | Now: ${price:,.0f}")
+        print(f"  Open {direction.upper()} | Entry: ${entry:,.0f} | TP: ${tp:,.0f} | SL: ${sl:,.0f} | Now: ${price:,.0f} | Range: ${period_low:,.0f}-${period_high:,.0f}")
         return
 
     pnl = ((entry - exit_price) if direction == "short" else (exit_price - entry)) * qty
@@ -564,7 +574,9 @@ def main():
         print("\nDEBUG DONE — no alerts sent, no state changed.")
         return
 
-    check_open_trade(state, master_price)
+    # Pass 1m candles for accurate high/low TP/SL detection
+    candles_1m_for_check = next((c for tf, c in tf_candles if tf["label"] == "1m"), None)
+    check_open_trade(state, master_price, candles_1m_for_check)
 
     if state.get("open_trade"):
         print("  Skipping new signals — trade already open.")
