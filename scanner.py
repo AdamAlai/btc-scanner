@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import datetime
 
-# ── CONFIG ───────────────────────────────────────────────────────────────────
+# ── CONFIG ────────────────────────────────────────────────────────────
 NTFY_TOPIC    = os.environ.get("NTFY_TOPIC", "btcwave554433")
 STATE_FILE    = "scanner_state.json"
 TRADE_LOG_FILE = "trade_log.json"
@@ -15,12 +15,12 @@ COOLDOWN_MIN  = 30
 STALE_HOURS   = 6
 
 TIMEFRAMES = [
-    {"label": "1m",  "interval": 1,  "gap": 100, "size": 200, "recent": 15, "vol_confirm": True},
-    {"label": "5m",  "interval": 5,  "gap": 150, "size": 300, "recent": 15, "vol_confirm": True},
-    {"label": "15m", "interval": 15, "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
-    {"label": "60m", "interval": 60, "gap": 400, "size": 800, "recent": 10, "vol_confirm": True},
+    {"label": "1m",  "interval": 1,  "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
+    {"label": "5m",  "interval": 5,  "gap": 300, "size": 600, "recent": 15, "vol_confirm": True},
+    {"label": "15m", "interval": 15, "gap": 400, "size": 800, "recent": 15, "vol_confirm": True},
+    {"label": "60m", "interval": 60, "gap": 800, "size": 1500, "recent": 10, "vol_confirm": True},
 ]
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
 DEBUG = "--debug" in sys.argv
 
@@ -418,7 +418,7 @@ def scan_timeframe(candles, tf):
             })
             break
 
-    # ── SPIKE DETECTOR ────────────────────────────────────────────────────────
+    # ── SPIKE DETECTOR ───────────────────────────────────────────────────────
     if label in ("1m", "5m") and len(candles) >= 22:
         last = candles[-1]
         candle_move = abs(last["close"] - last["open"])
@@ -570,4 +570,57 @@ def main():
     for tf in TIMEFRAMES:
         try:
             candles = get_kraken_candles(tf["interval"])
-            tf_candles.append((tf
+            tf_candles.append((tf, candles))
+            master_price = candles[-1]["close"]
+            print(f"  [{tf['label']}] {len(candles)} candles | Price: ${master_price:,.0f}")
+        except Exception as e:
+            print(f"  [{tf['label']}] FAILED: {e}")
+            continue
+
+    if not tf_candles:
+        print("  ERROR: No candle data acquired. Exiting.")
+        return
+
+    check_open_trade(state, master_price, tf_candles[0][1] if tf_candles[0][0]["label"] == "1m" else None)
+
+    if DEBUG:
+        for tf, candles in tf_candles:
+            debug_timeframe(candles, tf)
+        return
+
+    all_alerts = []
+    for tf, candles in tf_candles:
+        alerts = scan_timeframe(candles, tf)
+        all_alerts.extend(alerts)
+
+    if not all_alerts:
+        print("  No signals detected.")
+        return
+
+    for alert in all_alerts:
+        direction = alert["direction"]
+        label = alert["timeframe"]
+        in_cd, remaining = in_cooldown(state, direction, label)
+        if in_cd:
+            print(f"  [{label}] {direction.upper()}: in cooldown ({remaining}m remaining)")
+            continue
+
+        notify(alert["title"], alert["msg"], priority=alert["priority"])
+        trade = {
+            "time": now_str,
+            "signal": alert["signal"],
+            "timeframe": label,
+            "direction": direction,
+            "entry": alert["entry"],
+            "tp": alert["tp"],
+            "sl": alert["sl"],
+            "is_spike": alert.get("is_spike", False),
+        }
+        state["open_trade"] = trade
+        state["last_signal"][f"{direction}_{label}"] = datetime.now().isoformat()
+        save_state(state)
+        print(f"  [{label}] {direction.upper()}: trade opened | Entry: ${alert['entry']:,.0f}")
+
+
+if __name__ == "__main__":
+    main()
