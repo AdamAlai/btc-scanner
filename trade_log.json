@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "open_time": "2026-08-24 03:13 UTC",
+    "close_time": "2026-08-24 04:57 UTC",
+    "bot": "ATOM",
+    "signal": "LONG SETUP - Wave Strategy",
+    "timeframe": "5m",
+    "direction": "long",
+    "entry": 77267.8,
+    "tp": 77680.3,
+    "sl": 76860.3,
+    "exit": 76860.3,
+    "pnl": -263.69,
+    "result": "lost"
+  }
+]
