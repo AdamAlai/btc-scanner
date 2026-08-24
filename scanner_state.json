@@ -2,7 +2,17 @@
   "last_signal": {
     "long_5m": "2026-08-24T11:38:17.151384",
     "short_15m": "2026-08-24T09:00:25.435923",
-    "long_1m": "2026-08-24T11:38:17.013869"
+    "long_1m": "2026-08-24T11:38:17.013869",
+    "short_5m": "2026-08-24T11:49:06.104405"
   },
-  "open_trade": null
+  "open_trade": {
+    "time": "2026-08-24 11:49 UTC",
+    "signal": "SPIKE DOWN - Unusual Move",
+    "timeframe": "5m",
+    "direction": "short",
+    "entry": 78190.3,
+    "tp": 78190.3,
+    "sl": 78190.3,
+    "is_spike": true
+  }
 }
