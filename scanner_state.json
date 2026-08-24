@@ -11,6 +11,7 @@
     "entry": 77322.1,
     "tp": 77248.2,
     "sl": 77800.0,
-    "is_spike": false
+    "is_spike": false,
+    "last_check": "2026-08-24T08:08:17.180994"
   }
 }
