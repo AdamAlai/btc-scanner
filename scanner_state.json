@@ -6,14 +6,5 @@
     "short_5m": "2026-08-24T11:49:06.104405",
     "long_15m": "2026-08-24T14:35:35.568946"
   },
-  "open_trade": {
-    "time": "2026-08-24 14:35 UTC",
-    "signal": "SURGE UP - Momentum",
-    "timeframe": "15m",
-    "direction": "long",
-    "entry": 79647.3,
-    "tp": 79647.3,
-    "sl": 79647.3,
-    "is_spike": true
-  }
+  "open_trade": null
 }
