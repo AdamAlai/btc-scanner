@@ -2,19 +2,10 @@
   "last_signal": {
     "long_5m": "2026-08-24T16:45:48.008191",
     "short_15m": "2026-08-24T15:59:56.077661",
-    "long_1m": "2026-08-24T17:17:37.564647",
+    "long_1m": "2026-08-24T17:19:33.653702",
     "short_5m": "2026-08-24T11:49:06.104405",
     "long_15m": "2026-08-24T14:35:35.568946",
     "short_1m": "2026-08-24T16:45:47.958300"
   },
-  "open_trade": {
-    "time": "2026-08-24 17:17 UTC",
-    "signal": "LONG SETUP - Wave Strategy",
-    "timeframe": "1m",
-    "direction": "long",
-    "entry": 79036.1,
-    "tp": 79136.7,
-    "sl": 78585.1,
-    "is_spike": false
-  }
+  "open_trade": null
 }
