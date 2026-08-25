@@ -11,7 +11,6 @@ TRADE_LOG_FILE = "trade_log.json"
 POSITION_USD  = 50000
 PEAK_WINDOW   = 3
 MOMENTUM_BARS = 2
-COOLDOWN_MIN  = 30
 STALE_HOURS   = 6
 
 TIMEFRAMES = [
@@ -70,18 +69,6 @@ def log_trade(trade, result, exit_price, pnl):
     })
     with open(TRADE_LOG_FILE, "w") as f:
         json.dump(log, f, indent=2)
-
-
-def in_cooldown(state, direction, label):
-    key = f"{direction}_{label}"
-    last_str = state["last_signal"].get(key)
-    if not last_str:
-        return False, 0
-    last = datetime.fromisoformat(last_str)
-    elapsed = (datetime.now() - last).total_seconds() / 60
-    if elapsed < COOLDOWN_MIN:
-        return True, int(COOLDOWN_MIN - elapsed)
-    return False, 0
 
 
 def notify(title, msg, priority="default"):
@@ -213,10 +200,12 @@ def check_open_trade(state, price, candles_1m=None):
 
     # ── STALE TRADE DETECTION ─────────────────────────────────────────────────
     trade_time_str = trade.get("time", "")
+    time_open_mins = 0
     if trade_time_str:
         try:
             trade_time = datetime.strptime(trade_time_str, "%Y-%m-%d %H:%M UTC")
             hours_open = (datetime.utcnow() - trade_time).total_seconds() / 3600
+            time_open_mins = hours_open * 60
             if hours_open > STALE_HOURS:
                 qty = POSITION_USD / entry
                 pnl = ((entry - price) if direction == "short" else (price - entry)) * qty
@@ -281,16 +270,28 @@ def check_open_trade(state, price, candles_1m=None):
         state["last_signal"][f"{direction}_{trade.get('timeframe','')}"] = datetime.now().isoformat()
     else:
         move = abs(exit_price - entry)
+        
+        # ── DEEP DIAGNOSIS DATA ───────────────────────────────────────────────
+        ema_str = f"${trade.get('ema20'):,.0f}" if trade.get('ema20') else "N/A"
+        struct_str = "N/A"
+        if trade.get("p1") and trade.get("p2"):
+            struct_str = f"P1: ${trade.get('p1'):,.0f} | P2: ${trade.get('p2'):,.0f} | Trough: ${trade.get('trough'):,.0f}"
+        elif trade.get("l1") and trade.get("l2"):
+            struct_str = f"L1: ${trade.get('l1'):,.0f} | L2: ${trade.get('l2'):,.0f} | PeakB: ${trade.get('peak_b'):,.0f}"
+            
         loss_report = "\n".join([
             "TRADE LOSS REPORT",
             f"Signal: {trade.get('signal', 'N/A')}",
             f"Timeframe: {trade.get('timeframe', 'N/A')}",
             f"Direction: {direction.upper()}",
+            f"Time Open: {time_open_mins:.0f} mins",
             f"Entry: ${entry:,.0f}",
             f"Target: ${tp:,.0f} (needed ${abs(tp-entry):,.0f} {'up' if direction=='long' else 'down'})",
             f"Stop: ${sl:,.0f} (risked ${abs(sl-entry):,.0f})",
             f"Exit: ${exit_price:,.0f} (moved ${move:,.0f} against you)",
             f"PnL: ${pnl:+.0f} (qty {qty:.4f} BTC)",
+            f"EMA20 at Entry: {ema_str}",
+            f"Structure: {struct_str}",
             "Paste to Claude to diagnose."
         ])
         notify("Trade LOST", loss_report, priority="high")
@@ -313,6 +314,7 @@ def scan_timeframe(candles, tf):
     price    = candles[-1]["close"]
     last_idx = len(candles) - 1
     alerts   = []
+    e20      = ema(candles, 20)
 
     # ── SHORT (double peak) ───────────────────────────────────────────────────
     if len(peaks) >= 2:
@@ -331,7 +333,6 @@ def scan_timeframe(candles, tf):
             if p1 >= price: continue
             if p2 <= price: continue
             if price - p1 < 50: continue
-            e20 = ema(candles, 20)
             if e20 and price > e20 * 1.002:
                 continue
             msg = "\n".join([
@@ -347,6 +348,7 @@ def scan_timeframe(candles, tf):
                 "msg":       msg,
                 "entry": price, "tp": p1, "sl": p2,
                 "priority": "urgent", "timeframe": label,
+                "p1": p1, "p2": p2, "trough": trough, "ema20": e20
             })
 
     # ── LONG (double low) ─────────────────────────────────────────────────────
@@ -366,7 +368,6 @@ def scan_timeframe(candles, tf):
             if peak_b <= price: continue
             if l2 >= price: continue
             if peak_b - price < 50: continue
-            e20 = ema(candles, 20)
             if e20 and price < e20 * 0.998:
                 continue
             msg = "\n".join([
@@ -382,6 +383,7 @@ def scan_timeframe(candles, tf):
                 "msg":       msg,
                 "entry": price, "tp": peak_b, "sl": l2,
                 "priority": "urgent", "timeframe": label,
+                "l1": l1, "l2": l2, "peak_b": peak_b, "ema20": e20
             })
 
     # ── SUPPORT BREAK SHORT ───────────────────────────────────────────────────
@@ -415,6 +417,7 @@ def scan_timeframe(candles, tf):
                 "msg":       msg,
                 "entry": price, "tp": tp, "sl": sl,
                 "priority": "urgent", "timeframe": label,
+                "l1": l1, "peak_after": peak_after, "ema20": e20
             })
             break
 
@@ -440,7 +443,7 @@ def scan_timeframe(candles, tf):
                 "msg":        msg,
                 "entry": price, "tp": price, "sl": price,
                 "priority":   "high", "timeframe": label,
-                "is_spike":   True,
+                "is_spike":   True, "ema20": e20
             })
 
     # ── MOMENTUM SURGE DETECTOR ───────────────────────────────────────────────
@@ -482,7 +485,7 @@ def scan_timeframe(candles, tf):
                 "msg":        msg,
                 "entry": price, "tp": price, "sl": price,
                 "priority":   "urgent", "timeframe": label,
-                "is_spike":   True,
+                "is_spike":   True, "ema20": e20
             })
 
     return alerts
@@ -597,14 +600,25 @@ def main():
         print("  No signals detected.")
         return
 
+    # ── HIGHER TIMEFRAME BIAS FILTER ──────────────────────────────────────────
+    htf_bias = None
+    for alert in all_alerts:
+        if alert["timeframe"] in ("15m", "60m"):
+            htf_bias = alert["direction"]
+            print(f"  HTF Bias set to {htf_bias.upper()} based on {alert['timeframe']} signal")
+            break
+
     for alert in all_alerts:
         direction = alert["direction"]
         label = alert["timeframe"]
-        in_cd, remaining = in_cooldown(state, direction, label)
-        if in_cd:
-            print(f"  [{label}] {direction.upper()}: in cooldown ({remaining}m remaining)")
+
+        # Block lower timeframe signals that fight the higher timeframe bias
+        if label in ("1m", "5m") and htf_bias is not None and direction != htf_bias:
+            print(f"  [{label}] {direction.upper()}: Blocked by HTF Bias ({htf_bias.upper()})")
             continue
 
+        # COOLDOWN REMOVED PER USER REQUEST — collecting raw data volume
+        
         notify(alert["title"], alert["msg"], priority=alert["priority"])
         trade = {
             "time": now_str,
@@ -615,11 +629,21 @@ def main():
             "tp": alert["tp"],
             "sl": alert["sl"],
             "is_spike": alert.get("is_spike", False),
+            "p1": alert.get("p1"),
+            "p2": alert.get("p2"),
+            "trough": alert.get("trough"),
+            "l1": alert.get("l1"),
+            "l2": alert.get("l2"),
+            "peak_b": alert.get("peak_b"),
+            "ema20": alert.get("ema20")
         }
         state["open_trade"] = trade
         state["last_signal"][f"{direction}_{label}"] = datetime.now().isoformat()
         save_state(state)
         print(f"  [{label}] {direction.upper()}: trade opened | Entry: ${alert['entry']:,.0f}")
+        
+        # STOP AFTER OPENING ONE TRADE TO PREVENT OVERWRITING
+        break
 
 
 if __name__ == "__main__":
