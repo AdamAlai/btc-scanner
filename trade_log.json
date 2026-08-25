@@ -96,5 +96,19 @@
     "exit": 79136.7,
     "pnl": 63.64,
     "result": "won"
+  },
+  {
+    "open_time": "2026-08-25 14:07 UTC",
+    "close_time": "2026-08-25 14:25 UTC",
+    "bot": "ATOM",
+    "signal": "LONG SETUP - Wave Strategy",
+    "timeframe": "5m",
+    "direction": "long",
+    "entry": 78786.7,
+    "tp": 79224.1,
+    "sl": 78106.7,
+    "exit": 79224.1,
+    "pnl": 277.58,
+    "result": "won"
   }
 ]
