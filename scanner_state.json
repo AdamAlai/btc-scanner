@@ -2,26 +2,26 @@
   "last_signal": {
     "long_5m": "2026-08-25T14:58:51.543843",
     "short_15m": "2026-08-24T15:59:56.077661",
-    "long_1m": "2026-08-25T13:38:05.411263",
+    "long_1m": "2026-08-25T20:59:58.007457",
     "short_5m": "2026-08-25T20:49:15.797140",
     "long_15m": "2026-08-25T15:53:50.310017",
     "short_1m": "2026-08-24T19:23:08.354282"
   },
   "open_trade": {
-    "time": "2026-08-25 20:49 UTC",
-    "signal": "SURGE DOWN - Momentum",
-    "timeframe": "5m",
-    "direction": "short",
-    "entry": 78197.5,
-    "tp": 78197.5,
-    "sl": 78197.5,
-    "is_spike": true,
+    "time": "2026-08-25 20:59 UTC",
+    "signal": "LONG SETUP - Wave Strategy",
+    "timeframe": "1m",
+    "direction": "long",
+    "entry": 78212.7,
+    "tp": 78769.6,
+    "sl": 78181.2,
+    "is_spike": false,
     "p1": null,
     "p2": null,
     "trough": null,
-    "l1": null,
-    "l2": null,
-    "peak_b": null,
-    "ema20": 78781.76615831192
+    "l1": 78685.8,
+    "l2": 78181.2,
+    "peak_b": 78769.6,
+    "ema20": 78347.54651293939
   }
 }
