@@ -7,21 +7,5 @@
     "long_15m": "2026-08-25T23:42:09.458616",
     "short_1m": "2026-08-26T13:12:58.250599"
   },
-  "open_trade": {
-    "time": "2026-08-26 21:09 UTC",
-    "signal": "SPIKE UP - Unusual Move",
-    "timeframe": "5m",
-    "direction": "long",
-    "entry": 78600.0,
-    "tp": 78600.0,
-    "sl": 78600.0,
-    "is_spike": true,
-    "p1": null,
-    "p2": null,
-    "trough": null,
-    "l1": null,
-    "l2": null,
-    "peak_b": null,
-    "ema20": 78429.87338119044
-  }
+  "open_trade": null
 }
