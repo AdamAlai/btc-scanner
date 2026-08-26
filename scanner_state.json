@@ -5,16 +5,16 @@
     "long_1m": "2026-08-25T20:59:58.007457",
     "short_5m": "2026-08-26T11:38:28.194601",
     "long_15m": "2026-08-25T23:42:09.458616",
-    "short_1m": "2026-08-26T08:55:12.201675"
+    "short_1m": "2026-08-26T11:39:08.501689"
   },
   "open_trade": {
-    "time": "2026-08-26 11:38 UTC",
-    "signal": "SPIKE DOWN - Unusual Move",
-    "timeframe": "5m",
+    "time": "2026-08-26 11:39 UTC",
+    "signal": "SURGE DOWN - Momentum",
+    "timeframe": "1m",
     "direction": "short",
-    "entry": 78335.5,
-    "tp": 78335.5,
-    "sl": 78335.5,
+    "entry": 78323.3,
+    "tp": 78323.3,
+    "sl": 78323.3,
     "is_spike": true,
     "p1": null,
     "p2": null,
@@ -22,6 +22,6 @@
     "l1": null,
     "l2": null,
     "peak_b": null,
-    "ema20": 78614.60034726941
+    "ema20": 78554.47581189842
   }
 }
