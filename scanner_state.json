@@ -7,21 +7,5 @@
     "long_15m": "2026-08-25T23:42:09.458616",
     "short_1m": "2026-08-26T08:55:12.201675"
   },
-  "open_trade": {
-    "time": "2026-08-26 08:55 UTC",
-    "signal": "SURGE DOWN - Momentum",
-    "timeframe": "1m",
-    "direction": "short",
-    "entry": 78664.2,
-    "tp": 78664.2,
-    "sl": 78664.2,
-    "is_spike": true,
-    "p1": null,
-    "p2": null,
-    "trough": null,
-    "l1": null,
-    "l2": null,
-    "peak_b": null,
-    "ema20": 78860.69931666515
-  }
+  "open_trade": null
 }
