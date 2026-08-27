@@ -2,26 +2,26 @@
   "last_signal": {
     "long_5m": "2026-08-26T21:09:22.668345",
     "short_15m": "2026-08-24T15:59:56.077661",
-    "long_1m": "2026-08-27T10:40:01.638532",
-    "short_5m": "2026-08-26T11:38:28.194601",
+    "long_1m": "2026-08-27T16:19:17.783914",
+    "short_5m": "2026-08-27T16:19:17.945830",
     "long_15m": "2026-08-25T23:42:09.458616",
     "short_1m": "2026-08-26T13:12:58.250599"
   },
   "open_trade": {
-    "time": "2026-08-27 10:40 UTC",
-    "signal": "LONG SETUP - Wave Strategy",
-    "timeframe": "1m",
-    "direction": "long",
-    "entry": 79480.5,
-    "tp": 80011.4,
-    "sl": 79357.3,
+    "time": "2026-08-27 16:19 UTC",
+    "signal": "SHORT SETUP - Wave Strategy",
+    "timeframe": "5m",
+    "direction": "short",
+    "entry": 80449.2,
+    "tp": 80397.9,
+    "sl": 80800.0,
     "is_spike": false,
-    "p1": null,
-    "p2": null,
-    "trough": null,
-    "l1": 79834.9,
-    "l2": 79357.3,
-    "peak_b": 80011.4,
-    "ema20": 79631.3287552236
+    "p1": 80397.9,
+    "p2": 80800.0,
+    "trough": 80037.2,
+    "l1": null,
+    "l2": null,
+    "peak_b": null,
+    "ema20": 80293.73184686809
   }
 }
