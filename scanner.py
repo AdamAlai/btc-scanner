@@ -12,6 +12,7 @@ POSITION_USD  = 50000
 PEAK_WINDOW   = 3
 MOMENTUM_BARS = 2
 STALE_HOURS   = 6
+MIN_STOP_DIST = 100  # minimum $ distance between entry and stop loss
 
 TIMEFRAMES = [
     {"label": "1m",  "interval": 1,  "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
@@ -189,7 +190,6 @@ def check_open_trade(state, price, candles_1m=None):
         except Exception:
             pass
 
-    # Update check timestamp immediately and save
     trade["last_check"] = datetime.now().isoformat()
     save_state(state)
 
@@ -226,7 +226,6 @@ def check_open_trade(state, price, candles_1m=None):
         except Exception:
             pass
 
-    # Spike alerts have no real TP/SL — skip trade tracking for them
     if trade.get("is_spike"):
         state["open_trade"] = None
         save_state(state)
@@ -236,7 +235,6 @@ def check_open_trade(state, price, candles_1m=None):
     result = None
     exit_price = None
 
-    # Use last 3 candle high/low for accurate TP/SL detection
     if candles_1m and len(candles_1m) >= 3:
         recent = candles_1m[-3:]
         period_high = max(c["high"] for c in recent)
@@ -270,15 +268,13 @@ def check_open_trade(state, price, candles_1m=None):
         state["last_signal"][f"{direction}_{trade.get('timeframe','')}"] = datetime.now().isoformat()
     else:
         move = abs(exit_price - entry)
-        
-        # ── DEEP DIAGNOSIS DATA ───────────────────────────────────────────────
         ema_str = f"${trade.get('ema20'):,.0f}" if trade.get('ema20') else "N/A"
         struct_str = "N/A"
         if trade.get("p1") and trade.get("p2"):
             struct_str = f"P1: ${trade.get('p1'):,.0f} | P2: ${trade.get('p2'):,.0f} | Trough: ${trade.get('trough'):,.0f}"
         elif trade.get("l1") and trade.get("l2"):
             struct_str = f"L1: ${trade.get('l1'):,.0f} | L2: ${trade.get('l2'):,.0f} | PeakB: ${trade.get('peak_b'):,.0f}"
-            
+
         loss_report = "\n".join([
             "TRADE LOSS REPORT",
             f"Signal: {trade.get('signal', 'N/A')}",
@@ -333,8 +329,8 @@ def scan_timeframe(candles, tf):
             if p1 >= price: continue
             if p2 <= price: continue
             if price - p1 < 50: continue
-            if e20 and price > e20 * 1.002:
-                continue
+            if abs(price - p2) < MIN_STOP_DIST: continue
+            if e20 and price > e20 * 1.002: continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${p1:,.0f} | Stop: ${p2:,.0f}",
@@ -368,8 +364,8 @@ def scan_timeframe(candles, tf):
             if peak_b <= price: continue
             if l2 >= price: continue
             if peak_b - price < 50: continue
-            if e20 and price < e20 * 0.998:
-                continue
+            if abs(price - l2) < MIN_STOP_DIST: continue
+            if e20 and price < e20 * 0.998: continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${peak_b:,.0f} | Stop: ${l2:,.0f}",
@@ -404,6 +400,7 @@ def scan_timeframe(candles, tf):
             sl   = l1 + drop * 0.5
             if tp >= price: continue
             if sl <= price: continue
+            if abs(price - sl) < MIN_STOP_DIST: continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${tp:,.0f} | Stop: ${sl:,.0f}",
@@ -527,13 +524,15 @@ def debug_timeframe(candles, tf):
         avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
         vol_ok = v2 >= avg_vol * 0.8 if vol_confirm else True
         entry_ok = price < p2 and p1 < price and p2 > price
+        stop_ok = abs(price - p2) >= MIN_STOP_DIST
         print(f"\n     {ts(candles[idx1])} ${p1:,.0f} -> {ts(candles[idx2])} ${p2:,.0f}")
         print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
         print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
         print(f"      VOL   v2={v2:.2f} avg={avg_vol:.2f} {'OK' if vol_ok else 'FAIL'}")
         print(f"      MOM   {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
+        print(f"      STOP  ${abs(price-p2):,.0f} (>=$100) {'OK' if stop_ok else 'FAIL'}")
         print(f"      ENTRY price=${price:,.0f} < p2=${p2:,.0f} and p1=${p1:,.0f} < price: {'OK' if entry_ok else 'FAIL'}")
-        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok:
+        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok and stop_ok:
             print(f"      >>> WOULD FIRE SELL at ${price:,.0f} TP=${p1:,.0f} SL=${p2:,.0f}")
         else:
             print(f"      >>> NO SIGNAL")
@@ -550,13 +549,15 @@ def debug_timeframe(candles, tf):
         avg_vol = sum(c["volume"] for c in candles[max(0,idx2-20):idx2]) / 20
         vol_ok = v2 >= avg_vol * 0.8 if vol_confirm else True
         entry_ok = price > l2 and peak_b > price and l2 < price
+        stop_ok = abs(price - l2) >= MIN_STOP_DIST
         print(f"\n    {ts(candles[idx1])} ${l1:,.0f} -> {ts(candles[idx2])} ${l2:,.0f}")
         print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
         print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
         print(f"      VOL   v2={v2:.2f} avg={avg_vol:.2f} {'OK' if vol_ok else 'FAIL'}")
         print(f"      MOM   {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
+        print(f"      STOP  ${abs(price-l2):,.0f} (>=$100) {'OK' if stop_ok else 'FAIL'}")
         print(f"      ENTRY price=${price:,.0f} > l2=${l2:,.0f} and peak_b=${peak_b:,.0f} > price: {'OK' if entry_ok else 'FAIL'}")
-        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok:
+        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok and stop_ok:
             print(f"      >>> WOULD FIRE BUY at ${price:,.0f} TP=${peak_b:,.0f} SL=${l2:,.0f}")
         else:
             print(f"      >>> NO SIGNAL")
@@ -617,8 +618,20 @@ def main():
             print(f"  [{label}] {direction.upper()}: Blocked by HTF Bias ({htf_bias.upper()})")
             continue
 
-        # COOLDOWN REMOVED PER USER REQUEST — collecting raw data volume
-        
+        # ── RACE CONDITION DEDUP ──────────────────────────────────────────────
+        # Prevents 3 simultaneous workflows from firing the same signal 3 times
+        key = f"{direction}_{label}"
+        last_str = state["last_signal"].get(key)
+        if last_str:
+            try:
+                last = datetime.fromisoformat(last_str)
+                elapsed = (datetime.now() - last).total_seconds()
+                if elapsed < 300:  # 5 minutes
+                    print(f"  [{label}] {direction.upper()}: duplicate suppressed ({int(elapsed)}s since last)")
+                    continue
+            except Exception:
+                pass
+
         notify(alert["title"], alert["msg"], priority=alert["priority"])
         trade = {
             "time": now_str,
@@ -641,7 +654,7 @@ def main():
         state["last_signal"][f"{direction}_{label}"] = datetime.now().isoformat()
         save_state(state)
         print(f"  [{label}] {direction.upper()}: trade opened | Entry: ${alert['entry']:,.0f}")
-        
+
         # STOP AFTER OPENING ONE TRADE TO PREVENT OVERWRITING
         break
 
