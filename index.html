@@ -8,8 +8,10 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--g:#00ff88;--g2:#00ff8844;--g3:#00ff8822;--r:#ff3355;--r2:#ff335533;--y:#ffcc00;--w:#ffffff;--bg:#000;--bg2:#080808;--bg3:#0d0d0d;--b1:#111;--b2:#1a1a1a;--dim:#555;--mid:#888;}
+body.theme-tjr{--g:#ffcc00;--g2:#ffcc0044;--g3:#ffcc0022;}
 body{background:var(--bg);color:var(--w);font-family:'Share Tech Mono',monospace;min-height:100vh;overflow-x:hidden}
 body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,136,.008) 2px,rgba(0,255,136,.008) 4px);pointer-events:none;z-index:1}
+body.theme-tjr::before{background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(255,204,0,.008) 2px,rgba(255,204,0,.008) 4px)}
 .hdr{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--b1);position:sticky;top:0;background:rgba(0,0,0,.97);backdrop-filter:blur(12px);z-index:10}
 .logo{font-family:'Orbitron',monospace;font-weight:900;font-size:1.3rem;letter-spacing:8px;color:var(--w)}
 .logo em{color:var(--g);font-style:normal;text-shadow:0 0 20px var(--g)}
@@ -29,6 +31,7 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 .tc{margin:14px 20px;border:1px solid var(--b2);background:var(--bg2);padding:18px 20px}
 .tc.long{border-color:#00ff8855;background:rgba(0,255,136,.03)}
 .tc.short{border-color:#ff335544;background:rgba(255,51,85,.03)}
+body.theme-tjr .tc.long{border-color:#ffcc0055;background:rgba(255,204,0,.03)}
 .tc.none{border-color:var(--b1)}
 .tc-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:10px}
 .tc-dir{font-family:'Orbitron',monospace;font-size:1rem;font-weight:700;letter-spacing:5px}
@@ -151,7 +154,7 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
   <div class="feed" id="fnotifs"><div class="empty"><div class="ico">◈</div>loading...</div></div>
 </div>
 
-<div class="ftr">ATOM BOT ◈ WAVE STRATEGY ◈ AUTO-REFRESH 30s</div>
+<div class="ftr" id="footer">ATOM BOT ◈ WAVE STRATEGY ◈ AUTO-REFRESH 30s</div>
 
 <script>
 const U="AdamAlai",R="btc-scanner",B="main";
@@ -178,8 +181,11 @@ function switchBot(bot){
   currentBot=bot;
   document.getElementById('btn-atom').classList.toggle('on',bot==='atom');
   document.getElementById('btn-tjr').classList.toggle('on',bot==='tjr');
+  document.body.classList.toggle('theme-tjr',bot==='tjr');
   document.getElementById('logoTitle').innerHTML=bot==='atom'?'ATOM <em>BOT</em>':'TJR <em>BOT</em>';
+  document.getElementById('footer').textContent=bot==='atom'?'ATOM BOT ◈ WAVE STRATEGY ◈ AUTO-REFRESH 30s':'TJR BOT ◈ ICT STRATEGY ◈ NY KILLZONE ONLY';
   document.title=bot==='atom'?'ATOM BOT':'TJR BOT';
+  ot=null;
   refresh();
 }
 
@@ -210,6 +216,7 @@ function updatePnl(){
 async function fetchState(){
   try{
     const r=await fetch(raw(getStateFile()));
+    if(!r.ok){renderEmptyState();return;}
     const s=await r.json();
     const t=s.open_trade;
     const card=document.getElementById("tc");
@@ -222,7 +229,7 @@ async function fetchState(){
       ot=null;
       card.className="tc none";
       dEl.textContent="NO OPEN TRADE";dEl.className="tc-dir none";
-      tfEl.textContent="waiting for next setup...";
+      tfEl.textContent=currentBot==='tjr'?'waiting for NY Killzone...':'waiting for next setup...';
       grid.innerHTML="";pEl.textContent="—";pEl.className="tc-pnl na";
       return;
     }
@@ -266,7 +273,20 @@ async function fetchState(){
     `;
     updatePnl();
     renderNotifFromState(s);
-  }catch(e){document.getElementById("ttf").textContent="state unavailable"}
+  }catch(e){renderEmptyState()}
+}
+
+function renderEmptyState(){
+  ot=null;
+  const card=document.getElementById("tc");
+  const dEl=document.getElementById("tdir");
+  const tfEl=document.getElementById("ttf");
+  const grid=document.getElementById("tgrid");
+  const pEl=document.getElementById("tpnl");
+  card.className="tc none";
+  dEl.textContent="NO OPEN TRADE";dEl.className="tc-dir none";
+  tfEl.textContent=currentBot==='tjr'?'waiting for NY Killzone...':'waiting for next setup...';
+  grid.innerHTML="";pEl.textContent="—";pEl.className="tc-pnl na";
 }
 
 function renderNotifFromState(s){
@@ -291,14 +311,23 @@ function renderNotifFromState(s){
 async function fetchLog(){
   try{
     const r=await fetch(raw(getLogFile()));
-    if(!r.ok){renderTrades([]);return;}
+    if(!r.ok){renderTrades([]);renderSignals([]);renderStats([]);return;}
     const log=await r.json();
+    if(!Array.isArray(log)){renderTrades([]);renderSignals([]);renderStats([]);return;}
     renderStats(log);renderTrades(log);renderSignals(log);
-  }catch(e){renderTrades([])}
+  }catch(e){renderTrades([]);renderSignals([]);renderStats([])}
 }
 
 function renderStats(log){
-  if(!log.length)return;
+  if(!log||!log.length){
+    document.getElementById("spnl").textContent="—";
+    document.getElementById("swr").textContent="—";
+    document.getElementById("swl").textContent="—";
+    document.getElementById("sbest").textContent="—";
+    document.getElementById("wfill").style.width="0%";
+    document.getElementById("bt").textContent="0";
+    return;
+  }
   const wins=log.filter(t=>t.result==="won");
   const losses=log.filter(t=>t.result==="lost");
   const total=log.reduce((s,t)=>s+t.pnl,0);
@@ -315,7 +344,7 @@ function renderStats(log){
 
 function renderTrades(log){
   const el=document.getElementById("ftrades");
-  if(!log.length){el.innerHTML='<div class="empty"><div class="ico">◈</div>no completed trades yet</div>';return;}
+  if(!log||!log.length){el.innerHTML='<div class="empty"><div class="ico">◈</div>no completed trades yet</div>';return;}
   el.innerHTML=[...log].reverse().map(t=>`
     <div class="fi ${t.result}">
       <div class="ft">${ago(t.close_time)}</div>
@@ -329,13 +358,12 @@ function renderTrades(log){
 
 function renderSignals(log){
   const el=document.getElementById("fsignals");
-  document.getElementById("bs").textContent=log.length;
-  if(!log.length){el.innerHTML='<div class="empty"><div class="ico">◈</div>signals will appear here</div>';return;}
+  document.getElementById("bs").textContent=log?log.length:0;
+  if(!log||!log.length){el.innerHTML='<div class="empty"><div class="ico">◈</div>signals will appear here</div>';return;}
   el.innerHTML=[...log].reverse().map(t=>{
     const isL=t.direction==="long";
-    const isSurge=t.signal&&t.signal.includes("SURGE");
-    const cls=isSurge?"surge":isL?"long":"short";
-    const tc=isSurge?"y":isL?"g":"r";
+    const cls=isL?"long":"short";
+    const tc=isL?"g":"r";
     return`<div class="fi ${cls}">
       <div class="ft">${ago(t.open_time)}</div>
       <div class="fb">
