@@ -12,7 +12,9 @@ POSITION_USD  = 50000
 PEAK_WINDOW   = 3
 MOMENTUM_BARS = 2
 STALE_HOURS   = 6
-MIN_STOP_DIST = 100  # minimum $ distance between entry and stop loss
+MIN_STOP_DIST = 100  # Minimum $ distance between entry and stop loss
+MIN_TP_DIST   = 250  # Minimum $ distance to Take Profit
+MAX_TP_DIST   = 400  # Maximum $ distance to Take Profit
 
 TIMEFRAMES = [
     {"label": "1m",  "interval": 1,  "gap": 200, "size": 400, "recent": 15, "vol_confirm": True},
@@ -24,7 +26,6 @@ TIMEFRAMES = [
 
 DEBUG = "--debug" in sys.argv
 
-
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -34,11 +35,9 @@ def load_state():
             pass
     return {"last_signal": {}, "open_trade": None}
 
-
 def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
-
 
 def load_trade_log():
     if os.path.exists(TRADE_LOG_FILE):
@@ -50,7 +49,6 @@ def load_trade_log():
         except Exception:
             pass
     return []
-
 
 def log_trade(trade, result, exit_price, pnl):
     log = load_trade_log()
@@ -71,7 +69,6 @@ def log_trade(trade, result, exit_price, pnl):
     with open(TRADE_LOG_FILE, "w") as f:
         json.dump(log, f, indent=2)
 
-
 def notify(title, msg, priority="default"):
     safe_title = title.encode("ascii", "ignore").decode("ascii")
     safe_msg   = msg.encode("ascii", "ignore").decode("ascii")
@@ -85,7 +82,6 @@ def notify(title, msg, priority="default"):
         print(f"  Ntfy sent ({r.status_code}): {safe_title}")
     except Exception as e:
         print(f"  Ntfy failed: {e}")
-
 
 def get_kraken_candles(interval):
     r = requests.get(
@@ -111,7 +107,6 @@ def get_kraken_candles(interval):
         "volume": float(c[6]),
     } for c in raw]
 
-
 def get_coinbase_candles(interval_minutes):
     gran_map = {1: 60, 5: 300, 15: 900, 60: 3600}
     gran = gran_map.get(interval_minutes, 60)
@@ -131,7 +126,6 @@ def get_coinbase_candles(interval_minutes):
         "volume": float(c[5]),
     } for c in raw]
 
-
 def find_peaks_lows(candles):
     peaks, lows = [], []
     w = PEAK_WINDOW
@@ -144,18 +138,15 @@ def find_peaks_lows(candles):
             lows.append((i, candles[i]["low"], candles[i]["volume"]))
     return peaks, lows
 
-
 def momentum_down(candles, from_idx):
     end = from_idx + 1 + MOMENTUM_BARS
     if end > len(candles): return False
     return all(candles[i]["close"] < candles[i]["open"] for i in range(from_idx + 1, end))
 
-
 def momentum_up(candles, from_idx):
     end = from_idx + 1 + MOMENTUM_BARS
     if end > len(candles): return False
     return all(candles[i]["close"] > candles[i]["open"] for i in range(from_idx + 1, end))
-
 
 def ema(candles, period=20):
     if len(candles) < period:
@@ -166,12 +157,34 @@ def ema(candles, period=20):
         val = c["close"] * k + val * (1 - k)
     return val
 
-
 def ts(candle):
     if "time" in candle:
         return datetime.utcfromtimestamp(candle["time"]).strftime("%H:%M")
     return "??"
 
+def get_market_context(candles_dict, price):
+    ctx = {}
+    c1m = candles_dict.get('1m', [])
+    c15m = candles_dict.get('15m', [])
+    c60m = candles_dict.get('60m', [])
+
+    # 1-Hour Range (High/Low of the current 1h candle)
+    if c60m:
+        ctx['1h_high'] = c60m[-1]['high']
+        ctx['1h_low'] = c60m[-1]['low']
+
+    # 15m Trend (Price vs EMA50)
+    if len(c15m) >= 50:
+        ema50 = sum(c['close'] for c in c15m[-50:]) / 50
+        ctx['15m_trend'] = "BULLISH" if price > ema50 else "BEARISH"
+        ctx['15m_ema50'] = round(ema50)
+
+    # 1m Volatility (Average candle move over last 10 candles)
+    if len(c1m) >= 10:
+        avg_move = sum(abs(c['close'] - c['open']) for c in c1m[-10:]) / 10
+        ctx['1m_volatility'] = f"${avg_move:.0f}/candle"
+
+    return ctx
 
 def check_open_trade(state, price, candles_1m=None):
     trade = state.get("open_trade")
@@ -275,6 +288,9 @@ def check_open_trade(state, price, candles_1m=None):
         elif trade.get("l1") and trade.get("l2"):
             struct_str = f"L1: ${trade.get('l1'):,.0f} | L2: ${trade.get('l2'):,.0f} | PeakB: ${trade.get('peak_b'):,.0f}"
 
+        ctx = trade.get("context", {})
+        ctx_str = f"15m Trend: {ctx.get('15m_trend', 'N/A')} | 1m Vol: {ctx.get('1m_volatility', 'N/A')}"
+
         loss_report = "\n".join([
             "TRADE LOSS REPORT",
             f"Signal: {trade.get('signal', 'N/A')}",
@@ -288,6 +304,7 @@ def check_open_trade(state, price, candles_1m=None):
             f"PnL: ${pnl:+.0f} (qty {qty:.4f} BTC)",
             f"EMA20 at Entry: {ema_str}",
             f"Structure: {struct_str}",
+            f"Live Context: {ctx_str}",
             "Paste to Claude to diagnose."
         ])
         notify("Trade LOST", loss_report, priority="high")
@@ -297,7 +314,6 @@ def check_open_trade(state, price, candles_1m=None):
 
     state["open_trade"] = None
     save_state(state)
-
 
 def scan_timeframe(candles, tf):
     label       = tf["label"]
@@ -330,6 +346,11 @@ def scan_timeframe(candles, tf):
             if p2 <= price: continue
             if price - p1 < 50: continue
             if abs(price - p2) < MIN_STOP_DIST: continue
+            
+            # TP CONSTRAINT: $250 - $400 distance
+            tp_dist = abs(price - p1)
+            if not (MIN_TP_DIST <= tp_dist <= MAX_TP_DIST): continue
+            
             if e20 and price > e20 * 1.002: continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
@@ -365,6 +386,11 @@ def scan_timeframe(candles, tf):
             if l2 >= price: continue
             if peak_b - price < 50: continue
             if abs(price - l2) < MIN_STOP_DIST: continue
+
+            # TP CONSTRAINT: $250 - $400 distance
+            tp_dist = abs(peak_b - price)
+            if not (MIN_TP_DIST <= tp_dist <= MAX_TP_DIST): continue
+
             if e20 and price < e20 * 0.998: continue
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
@@ -401,6 +427,11 @@ def scan_timeframe(candles, tf):
             if tp >= price: continue
             if sl <= price: continue
             if abs(price - sl) < MIN_STOP_DIST: continue
+            
+            # TP CONSTRAINT: $250 - $400 distance
+            tp_dist = abs(price - tp)
+            if not (MIN_TP_DIST <= tp_dist <= MAX_TP_DIST): continue
+
             msg = "\n".join([
                 f"Entry: ~${price:,.0f}",
                 f"Target: ${tp:,.0f} | Stop: ${sl:,.0f}",
@@ -487,7 +518,6 @@ def scan_timeframe(candles, tf):
 
     return alerts
 
-
 def debug_timeframe(candles, tf):
     label       = tf["label"]
     min_gap     = tf["gap"]
@@ -525,14 +555,18 @@ def debug_timeframe(candles, tf):
         vol_ok = v2 >= avg_vol * 0.8 if vol_confirm else True
         entry_ok = price < p2 and p1 < price and p2 > price
         stop_ok = abs(price - p2) >= MIN_STOP_DIST
+        tp_dist = abs(price - p1)
+        tp_ok = MIN_TP_DIST <= tp_dist <= MAX_TP_DIST
+        
         print(f"\n     {ts(candles[idx1])} ${p1:,.0f} -> {ts(candles[idx2])} ${p2:,.0f}")
         print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
         print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
         print(f"      VOL   v2={v2:.2f} avg={avg_vol:.2f} {'OK' if vol_ok else 'FAIL'}")
         print(f"      MOM   {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
         print(f"      STOP  ${abs(price-p2):,.0f} (>=$100) {'OK' if stop_ok else 'FAIL'}")
+        print(f"      TP    ${tp_dist:,.0f} ($250-$400) {'OK' if tp_ok else 'FAIL'}")
         print(f"      ENTRY price=${price:,.0f} < p2=${p2:,.0f} and p1=${p1:,.0f} < price: {'OK' if entry_ok else 'FAIL'}")
-        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok and stop_ok:
+        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok and stop_ok and tp_ok:
             print(f"      >>> WOULD FIRE SELL at ${price:,.0f} TP=${p1:,.0f} SL=${p2:,.0f}")
         else:
             print(f"      >>> NO SIGNAL")
@@ -550,18 +584,21 @@ def debug_timeframe(candles, tf):
         vol_ok = v2 >= avg_vol * 0.8 if vol_confirm else True
         entry_ok = price > l2 and peak_b > price and l2 < price
         stop_ok = abs(price - l2) >= MIN_STOP_DIST
+        tp_dist = abs(peak_b - price)
+        tp_ok = MIN_TP_DIST <= tp_dist <= MAX_TP_DIST
+        
         print(f"\n    {ts(candles[idx1])} ${l1:,.0f} -> {ts(candles[idx2])} ${l2:,.0f}")
         print(f"      GAP   ${gap:,.0f} (>=${min_gap}) {'OK' if gap>=min_gap else 'FAIL'}")
         print(f"      SIZE  ${size:,.0f} (>=${min_size}) {'OK' if size>=min_size else 'FAIL'}")
         print(f"      VOL   v2={v2:.2f} avg={avg_vol:.2f} {'OK' if vol_ok else 'FAIL'}")
         print(f"      MOM   {'OK' if mom else 'FAIL'}  AGE {age} (<={recent}) {'OK' if age<=recent else 'FAIL'}")
         print(f"      STOP  ${abs(price-l2):,.0f} (>=$100) {'OK' if stop_ok else 'FAIL'}")
+        print(f"      TP    ${tp_dist:,.0f} ($250-$400) {'OK' if tp_ok else 'FAIL'}")
         print(f"      ENTRY price=${price:,.0f} > l2=${l2:,.0f} and peak_b=${peak_b:,.0f} > price: {'OK' if entry_ok else 'FAIL'}")
-        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok and stop_ok:
+        if gap>=min_gap and size>=min_size and vol_ok and mom and age<=recent and entry_ok and stop_ok and tp_ok:
             print(f"      >>> WOULD FIRE BUY at ${price:,.0f} TP=${peak_b:,.0f} SL=${l2:,.0f}")
         else:
             print(f"      >>> NO SIGNAL")
-
 
 def main():
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
@@ -571,10 +608,13 @@ def main():
 
     tf_candles = []
     master_price = None
+    candles_dict = {}
+    
     for tf in TIMEFRAMES:
         try:
             candles = get_kraken_candles(tf["interval"])
             tf_candles.append((tf, candles))
+            candles_dict[tf['label']] = candles
             master_price = candles[-1]["close"]
             print(f"  [{tf['label']}] {len(candles)} candles | Price: ${master_price:,.0f}")
         except Exception as e:
@@ -585,7 +625,7 @@ def main():
         print("  ERROR: No candle data acquired. Exiting.")
         return
 
-    check_open_trade(state, master_price, tf_candles[0][1] if tf_candles[0][0]["label"] == "1m" else None)
+    check_open_trade(state, master_price, candles_dict.get('1m'))
 
     if DEBUG:
         for tf, candles in tf_candles:
@@ -609,6 +649,8 @@ def main():
             print(f"  HTF Bias set to {htf_bias.upper()} based on {alert['timeframe']} signal")
             break
 
+    context = get_market_context(candles_dict, master_price)
+
     for alert in all_alerts:
         direction = alert["direction"]
         label = alert["timeframe"]
@@ -619,7 +661,6 @@ def main():
             continue
 
         # ── RACE CONDITION DEDUP ──────────────────────────────────────────────
-        # Prevents 3 simultaneous workflows from firing the same signal 3 times
         key = f"{direction}_{label}"
         last_str = state["last_signal"].get(key)
         if last_str:
@@ -632,7 +673,10 @@ def main():
             except Exception:
                 pass
 
-        notify(alert["title"], alert["msg"], priority=alert["priority"])
+        # Append context to Ntfy message
+        ctx_msg = f"\n15m Trend: {context.get('15m_trend', 'N/A')} | 1m Vol: {context.get('1m_volatility', 'N/A')}"
+        notify(alert["title"], alert["msg"] + ctx_msg, priority=alert["priority"])
+        
         trade = {
             "time": now_str,
             "signal": alert["signal"],
@@ -642,6 +686,7 @@ def main():
             "tp": alert["tp"],
             "sl": alert["sl"],
             "is_spike": alert.get("is_spike", False),
+            "context": context,
             "p1": alert.get("p1"),
             "p2": alert.get("p2"),
             "trough": alert.get("trough"),
@@ -651,13 +696,12 @@ def main():
             "ema20": alert.get("ema20")
         }
         state["open_trade"] = trade
-        state["last_signal"][f"{direction}_{label}"] = datetime.now().isoformat()
+        state["last_signal"][key] = datetime.now().isoformat()
         save_state(state)
         print(f"  [{label}] {direction.upper()}: trade opened | Entry: ${alert['entry']:,.0f}")
 
         # STOP AFTER OPENING ONE TRADE TO PREVENT OVERWRITING
         break
-
 
 if __name__ == "__main__":
     main()
