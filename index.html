@@ -91,14 +91,14 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 <body>
 
 <div class="hdr">
-  <div class="logo">ATOM <em>BOT</em></div>
+  <div class="logo" id="logoTitle">ATOM <em>BOT</em></div>
   <div class="live"><div class="dot"></div>LIVE</div>
 </div>
 
 <div class="bots">
-  <button class="bbot on">ATOM</button>
-  <button class="bbot soon">OROCHI</button>
-  <button class="bbot soon">TJR</button>
+  <button class="bbot on" id="btn-atom" onclick="switchBot('atom')">ATOM</button>
+  <button class="bbot soon" id="btn-orochi">OROCHI</button>
+  <button class="bbot" id="btn-tjr" onclick="switchBot('tjr')">TJR</button>
 </div>
 
 <div class="price-wrap">
@@ -155,7 +155,7 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 
 <script>
 const U="AdamAlai",R="btc-scanner",B="main";
-let cp=0,ot=null;
+let cp=0,ot=null,currentBot='atom';
 
 function raw(f){return`https://raw.githubusercontent.com/${U}/${R}/${B}/${f}?t=${Date.now()}`}
 function fm(n){const a=Math.abs(Math.round(n));return(n>=0?"+$":"-$")+a.toLocaleString()}
@@ -169,6 +169,18 @@ function ago(s){
   if(diff<3600)return Math.floor(diff/60)+"m ago";
   if(diff<86400)return Math.floor(diff/3600)+"h ago";
   return Math.floor(diff/86400)+"d ago";
+}
+
+function getStateFile(){return currentBot==='atom'?'scanner_state.json':'tjr_state.json'}
+function getLogFile(){return currentBot==='atom'?'trade_log.json':'tjr_trade_log.json'}
+
+function switchBot(bot){
+  currentBot=bot;
+  document.getElementById('btn-atom').classList.toggle('on',bot==='atom');
+  document.getElementById('btn-tjr').classList.toggle('on',bot==='tjr');
+  document.getElementById('logoTitle').innerHTML=bot==='atom'?'ATOM <em>BOT</em>':'TJR <em>BOT</em>';
+  document.title=bot==='atom'?'ATOM BOT':'TJR BOT';
+  refresh();
 }
 
 async function fetchPrice(){
@@ -197,7 +209,7 @@ function updatePnl(){
 
 async function fetchState(){
   try{
-    const r=await fetch(raw("scanner_state.json"));
+    const r=await fetch(raw(getStateFile()));
     const s=await r.json();
     const t=s.open_trade;
     const card=document.getElementById("tc");
@@ -220,15 +232,25 @@ async function fetchState(){
     dEl.className="tc-dir "+t.direction;
     tfEl.textContent="["+(t.timeframe||"?")+"] • "+ago(t.time);
     
-    let ctxHtml = '';
-    if(t.context){
-        const trendClass = t.context['15m_trend'] === 'BULLISH' ? 'bull' : 'bear';
-        ctxHtml = `<div class="ctx-box">
+    let ctxHtml='';
+    if(currentBot==='atom'&&t.context){
+        const trendClass=t.context['15m_trend']==='BULLISH'?'bull':'bear';
+        ctxHtml=`<div class="ctx-box">
             <div class="ctx-lbl">LIVE MARKET CONTEXT AT ENTRY</div>
             <div class="ctx-val">
-                ${t.context['15m_trend'] ? `15m Trend: <span class="${trendClass}">${t.context['15m_trend']}</span> (EMA50: ${fp(t.context['15m_ema50'])})<br>` : ''}
-                ${t.context['1h_high'] ? `1H Range: ${fp(t.context['1h_low'])} - ${fp(t.context['1h_high'])}<br>` : ''}
-                ${t.context['1m_volatility'] ? `1m Volatility: ${t.context['1m_volatility']}<br>` : ''}
+                ${t.context['15m_trend']?`15m Trend: <span class="${trendClass}">${t.context['15m_trend']}</span> (EMA50: ${fp(t.context['15m_ema50'])})<br>`:''}
+                ${t.context['1h_high']?`1H Range: ${fp(t.context['1h_low'])} - ${fp(t.context['1h_high'])}<br>`:''}
+                ${t.context['1m_volatility']?`1m Volatility: ${t.context['1m_volatility']}<br>`:''}
+            </div>
+        </div>`;
+    }else if(currentBot==='tjr'){
+        ctxHtml=`<div class="ctx-box">
+            <div class="ctx-lbl">ICT SETUP DETAILS</div>
+            <div class="ctx-val">
+                ${t.bias?`HTF Bias: <span class="${t.bias==='bullish'?'bull':'bear'}">${t.bias.toUpperCase()}</span><br>`:''}
+                ${t.structure?`Structure: ${t.structure.toUpperCase()}<br>`:''}
+                ${t.poi_type?`POI: ${t.poi_type}<br>`:''}
+                ${t.sweep_level?`Sweep Level: ${fp(t.sweep_level)}<br>`:''}
             </div>
         </div>`;
     }
@@ -268,10 +290,10 @@ function renderNotifFromState(s){
 
 async function fetchLog(){
   try{
-    const r=await fetch(raw("trade_log.json"));
+    const r=await fetch(raw(getLogFile()));
     if(!r.ok){renderTrades([]);return;}
     const log=await r.json();
-    renderStats(log); renderTrades(log); renderSignals(log);
+    renderStats(log);renderTrades(log);renderSignals(log);
   }catch(e){renderTrades([])}
 }
 
