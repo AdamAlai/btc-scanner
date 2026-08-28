@@ -1,0 +1,31 @@
+name: TJR Scanner
+on:
+  schedule:
+    # Run every 5 minutes during NY Killzone (13:30-16:00 UTC = 8:30-11:00 AM EST)
+    # Monday through Friday only
+    - cron: '*/5 13-16 * * 1-5'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run TJR scanner
+        run: python tjr_scanner.py
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      - name: Save state
+        run: |
+          git config user.name "tjr-scanner-bot"
+          git config user.email "bot@tjrscanner.local"
+          git add tjr_state.json tjr_trade_log.json || true
+          git diff --cached --quiet || git commit -m "tjr: update after scan"
+          git push || true
