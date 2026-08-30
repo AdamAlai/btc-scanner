@@ -3,9 +3,32 @@
     "long_5m": "2026-08-26T21:09:22.668345",
     "short_15m": "2026-08-24T15:59:56.077661",
     "long_1m": "2026-08-27T16:19:17.783914",
-    "short_5m": "2026-08-27T20:46:16.238388",
+    "short_5m": "2026-08-30T23:48:24.811521",
     "long_15m": "2026-08-27T20:46:16.513620",
     "short_1m": "2026-08-26T13:12:58.250599"
   },
-  "open_trade": null
+  "open_trade": {
+    "time": "2026-08-30 23:48 UTC",
+    "signal": "SPIKE DOWN - Unusual Move",
+    "timeframe": "5m",
+    "direction": "short",
+    "entry": 77131.2,
+    "tp": 77131.2,
+    "sl": 77131.2,
+    "is_spike": true,
+    "context": {
+      "1h_high": 78433.6,
+      "1h_low": 77000.0,
+      "15m_trend": "BEARISH",
+      "15m_ema50": 78687,
+      "1m_volatility": "$67/candle"
+    },
+    "p1": null,
+    "p2": null,
+    "trough": null,
+    "l1": null,
+    "l2": null,
+    "peak_b": null,
+    "ema20": 78043.47644852173
+  }
 }
