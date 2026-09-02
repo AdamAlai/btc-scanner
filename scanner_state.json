@@ -7,29 +7,5 @@
     "long_15m": "2026-08-31T18:12:15.735350",
     "short_1m": "2026-08-26T13:12:58.250599"
   },
-  "open_trade": {
-    "time": "2026-09-01 19:23 UTC",
-    "signal": "LONG SETUP - Wave Strategy",
-    "timeframe": "5m",
-    "direction": "long",
-    "entry": 77308.4,
-    "tp": 77699.6,
-    "sl": 76398.4,
-    "is_spike": false,
-    "context": {
-      "1h_high": 77316.4,
-      "1h_low": 77079.7,
-      "15m_trend": "BEARISH",
-      "15m_ema50": 77849,
-      "1m_volatility": "$23/candle"
-    },
-    "p1": null,
-    "p2": null,
-    "trough": null,
-    "l1": 77382.0,
-    "l2": 76398.4,
-    "peak_b": 77699.6,
-    "ema20": 77155.03286340766,
-    "last_check": "2026-09-02T01:21:29.355364"
-  }
+  "open_trade": null
 }
