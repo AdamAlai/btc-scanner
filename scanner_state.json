@@ -3,9 +3,32 @@
     "long_5m": "2026-09-03T14:27:05.921706",
     "short_15m": "2026-08-31T22:50:25.596662",
     "long_1m": "2026-08-27T16:19:17.783914",
-    "short_5m": "2026-09-01T15:09:58.326871",
+    "short_5m": "2026-09-08T13:51:39.347650",
     "long_15m": "2026-09-03T15:02:53.643347",
     "short_1m": "2026-08-26T13:12:58.250599"
   },
-  "open_trade": null
+  "open_trade": {
+    "time": "2026-09-08 13:51 UTC",
+    "signal": "SURGE DOWN - Momentum",
+    "timeframe": "5m",
+    "direction": "short",
+    "entry": 77706.3,
+    "tp": 77706.3,
+    "sl": 77706.3,
+    "is_spike": true,
+    "context": {
+      "1h_high": 78518.7,
+      "1h_low": 77650.9,
+      "15m_trend": "BEARISH",
+      "15m_ema50": 78592,
+      "1m_volatility": "$60/candle"
+    },
+    "p1": null,
+    "p2": null,
+    "trough": null,
+    "l1": null,
+    "l2": null,
+    "peak_b": null,
+    "ema20": 78170.77028650534
+  }
 }
