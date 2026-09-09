@@ -3,25 +3,25 @@
     "long_5m": "2026-09-09T14:29:34.847522",
     "short_15m": "2026-08-31T22:50:25.596662",
     "long_1m": "2026-08-27T16:19:17.783914",
-    "short_5m": "2026-09-08T13:51:39.347650",
+    "short_5m": "2026-09-09T15:09:50.912957",
     "long_15m": "2026-09-03T15:02:53.643347",
     "short_1m": "2026-08-26T13:12:58.250599"
   },
   "open_trade": {
-    "time": "2026-09-09 14:29 UTC",
-    "signal": "SPIKE UP - Unusual Move",
+    "time": "2026-09-09 15:09 UTC",
+    "signal": "SURGE DOWN - Momentum",
     "timeframe": "5m",
-    "direction": "long",
-    "entry": 79220.7,
-    "tp": 79220.7,
-    "sl": 79220.7,
+    "direction": "short",
+    "entry": 78586.0,
+    "tp": 78586.0,
+    "sl": 78586.0,
     "is_spike": true,
     "context": {
-      "1h_high": 79234.5,
-      "1h_low": 78851.1,
-      "15m_trend": "BULLISH",
-      "15m_ema50": 79129,
-      "1m_volatility": "$47/candle"
+      "1h_high": 79368.3,
+      "1h_low": 78436.1,
+      "15m_trend": "BEARISH",
+      "15m_ema50": 79132,
+      "1m_volatility": "$154/candle"
     },
     "p1": null,
     "p2": null,
@@ -29,6 +29,6 @@
     "l1": null,
     "l2": null,
     "peak_b": null,
-    "ema20": 79217.3115949641
+    "ema20": 79062.37292540474
   }
 }
