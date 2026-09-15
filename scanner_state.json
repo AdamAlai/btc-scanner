@@ -7,28 +7,5 @@
     "long_15m": "2026-09-03T15:02:53.643347",
     "short_1m": "2026-08-26T13:12:58.250599"
   },
-  "open_trade": {
-    "time": "2026-09-15 18:47 UTC",
-    "signal": "SURGE DOWN - Momentum",
-    "timeframe": "5m",
-    "direction": "short",
-    "entry": 75416.0,
-    "tp": 75416.0,
-    "sl": 75416.0,
-    "is_spike": true,
-    "context": {
-      "1h_high": 77152.1,
-      "1h_low": 75200.0,
-      "15m_trend": "BEARISH",
-      "15m_ema50": 76683,
-      "1m_volatility": "$139/candle"
-    },
-    "p1": null,
-    "p2": null,
-    "trough": null,
-    "l1": null,
-    "l2": null,
-    "peak_b": null,
-    "ema20": 76433.0101832266
-  }
+  "open_trade": null
 }
