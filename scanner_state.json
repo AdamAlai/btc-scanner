@@ -3,33 +3,32 @@
     "long_5m": "2026-09-15T15:40:36.227929",
     "short_15m": "2026-08-31T22:50:25.596662",
     "long_1m": "2026-09-10T05:28:57.092747",
-    "short_5m": "2026-09-09T15:09:50.912957",
+    "short_5m": "2026-09-15T18:47:26.895434",
     "long_15m": "2026-09-03T15:02:53.643347",
     "short_1m": "2026-08-26T13:12:58.250599"
   },
   "open_trade": {
-    "time": "2026-09-15 15:40 UTC",
-    "signal": "LONG SETUP - Wave Strategy",
+    "time": "2026-09-15 18:47 UTC",
+    "signal": "SURGE DOWN - Momentum",
     "timeframe": "5m",
-    "direction": "long",
-    "entry": 76366.2,
-    "tp": 76737.2,
-    "sl": 75561.0,
-    "is_spike": false,
+    "direction": "short",
+    "entry": 75416.0,
+    "tp": 75416.0,
+    "sl": 75416.0,
+    "is_spike": true,
     "context": {
-      "1h_high": 76462.3,
-      "1h_low": 75789.0,
+      "1h_high": 77152.1,
+      "1h_low": 75200.0,
       "15m_trend": "BEARISH",
-      "15m_ema50": 76995,
-      "1m_volatility": "$42/candle"
+      "15m_ema50": 76683,
+      "1m_volatility": "$139/candle"
     },
     "p1": null,
     "p2": null,
     "trough": null,
-    "l1": 76094.4,
-    "l2": 75561.0,
-    "peak_b": 76737.2,
-    "ema20": 76228.46745556433,
-    "last_check": "2026-09-15T15:41:35.347037"
+    "l1": null,
+    "l2": null,
+    "peak_b": null,
+    "ema20": 76433.0101832266
   }
 }
