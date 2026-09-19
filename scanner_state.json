@@ -3,33 +3,9 @@
     "long_5m": "2026-09-17T14:12:48.763299",
     "short_15m": "2026-09-18T11:50:34.586665",
     "long_1m": "2026-09-16T18:38:29.993389",
-    "short_5m": "2026-09-19T01:23:43.419190",
+    "short_5m": "2026-09-19T06:20:25.829531",
     "long_15m": "2026-09-03T15:02:53.643347",
     "short_1m": "2026-09-18T15:11:27.316679"
   },
-  "open_trade": {
-    "time": "2026-09-19 01:23 UTC",
-    "signal": "SHORT SETUP - Wave Strategy",
-    "timeframe": "5m",
-    "direction": "short",
-    "entry": 81234.0,
-    "tp": 80960.9,
-    "sl": 81705.2,
-    "is_spike": false,
-    "context": {
-      "1h_high": 81705.2,
-      "1h_low": 81090.0,
-      "15m_trend": "BULLISH",
-      "15m_ema50": 80833,
-      "1m_volatility": "$29/candle"
-    },
-    "p1": 80960.9,
-    "p2": 81705.2,
-    "trough": 80823.7,
-    "l1": null,
-    "l2": null,
-    "peak_b": null,
-    "ema20": 81218.85816251095,
-    "last_check": "2026-09-19T06:15:26.166603"
-  }
+  "open_trade": null
 }
